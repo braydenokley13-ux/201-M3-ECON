@@ -1,0 +1,2495 @@
+/***********************************************************
+ * BOW SPORTS CAPITAL — MODULE 3 FINAL SIMULATION
+ * PART 1 — GLOBAL CONSTANTS & CONFIGURATION
+ *
+ * This script powers the Module 3 Final:
+ * - 5 Chapters (each with A/B/C choices + 5 MCQs per choice)
+ * - 1 Final Check (10 MCQs)
+ * - Logging + Emails + Claim Codes
+ *
+ * Parts Overview (in order):
+ *  1) Global Constants & Config      ← YOU ARE HERE
+ *  2) Core Utilities
+ *  3) Menu System
+ *  4) Sheet Setup / Layout Engine
+ *  5) Content Engine (Narratives, Outcomes, MCQs)
+ *  6) Run Engine (load chapters + final)
+ *  7) Scoring Engine
+ *  8) Logging Engine
+ *  9) Email Engine
+ * 10) Optional Admin Tools (Reset, etc.)
+ ***********************************************************/
+
+/***********************
+ * BRANDING & COLORS
+ ***********************/
+const COLOR_PRIMARY      = "#2563eb";  // BOW blue
+const COLOR_ACCENT       = "#fbbf24";  // gold accent
+const COLOR_HEADER_BG    = "#1e3a8a";  // dark header blue
+const COLOR_HEADER_TEXT  = "#ffffff";  // white
+const COLOR_TABLE_HEADER = "#e5edff";  // light blue header
+const COLOR_MUTED_TEXT   = "#6b7280";  // gray text
+
+/***********************
+ * SHEET NAMES
+ ***********************/
+const SHEET_SETUP        = "Setup — Module 3 Final";
+const SHEET_FINAL        = "Final Check";
+const SHEET_STUDENT      = "StudentData";
+const SHEET_SYSTEMLOG    = "SystemLog";
+
+// Correct sheet names used throughout the simulation
+const CHAPTER_SHEETS = {
+  1: "Chapter 1 — Hiring & Information",
+  2: "Chapter 2 — Automation vs Freelancers",
+  3: "Chapter 3 — Optimization & Structure",
+  4: "Chapter 4 — Crisis & Risk",
+  5: "Chapter 5 — Endgame Strategy"
+};
+
+// Helper to safely fetch a chapter sheet
+function getChapterSheet_(chapterNum) {
+  return SpreadsheetApp.getActive().getSheetByName(CHAPTER_SHEETS[chapterNum]);
+}
+
+
+/***********************
+ * QUESTION LAYOUT
+ ***********************/
+// For each chapter:
+// - 5 questions per chapter
+// - We will put them on rows 14, 18, 22, 26, 30 (for example)
+const CHAPTER_Q_ROWS = [14, 18, 22, 26, 30];
+
+// For the final check:
+// - 10 questions
+// - We’ll place them on these rows:
+const FINAL_Q_ROWS = [8, 12, 16, 20, 24, 28, 32, 36, 40, 44];
+
+/***********************
+ * COLUMN INDEXES
+ * (1 = Column A, 2 = Column B, etc.)
+ ***********************/
+const COL_Q_TEXT    = 1; // A — Question text
+const COL_Q_OPTIONS = 2; // B — Stacked choices (A/B/C/D)
+const COL_Q_ANSWER  = 3; // C — Student answer (A/B/C/D)
+const COL_Q_CORRECT = 4; // D — Correct answer (hidden)
+const COL_Q_ID      = 5; // E — Question ID (hidden)
+
+/***********************
+ * PASS / FAIL SETTINGS
+ ***********************/
+const CHAPTER_QUESTIONS_PER_CHAPTER = 5;
+const CHAPTER_PASS_REQUIRED         = 4; // need 4/5 correct
+
+const FINAL_QUESTIONS_COUNT         = 10;
+const FINAL_PASS_REQUIRED           = 7; // need 7/10 correct
+
+/***********************
+ * CLAIM CODES
+ * These are ONLY used in emails (not written to any sheet).
+ ***********************/
+const CLAIM_CODES = [
+  "BSC-M3F-2K9X",
+  "BSC-M3F-5Q7L",
+  "BSC-M3F-8R3D",
+  "BSC-M3F-1V6P",
+  "BSC-M3F-4Z2H"
+];
+
+/***********************
+ * BEHAVIOR FLAGS
+ ***********************/
+// If true, Setup will DELETE and recreate chapter/final/backend sheets
+// when you run "Setup Simulation".
+const ALLOW_SHEET_RESET = true;
+
+// If true, the optional "Reset Simulation" admin tool will:
+// - Clear answers/scores on chapters + final
+// - (optionally) log a reset event
+const ENABLE_RESET_TOOL = true;
+
+/***********************
+ * EMAIL / BRANDING CONFIG
+ ***********************/
+// Display name for outgoing emails
+const EMAIL_SENDER_NAME = "Bow Sports Capital — Module 3";
+
+// Subject line prefixes (we’ll use these in Part 9)
+const EMAIL_SUBJECT_PREFIX_CHAPTER = "Module 3 Final — Chapter Result";
+const EMAIL_SUBJECT_PREFIX_FINAL   = "Module 3 Final — Completion";
+
+/***********************
+ * PROPERTY KEYS
+ * (for Document Properties)
+ ***********************/
+const PROP_USER_EMAIL = "BSC_M3F_USER_EMAIL";
+/***********************************************************
+ * PART 2 — CORE UTILITIES
+ * Small, reusable helper functions used across all modules.
+ * No business logic belongs here.
+ ***********************************************************/
+
+/***********************
+ * TIMESTAMP (ISO-8601)
+ ***********************/
+function timestamp_() {
+  return new Date().toISOString();
+}
+
+/***********************
+ * SHEET CREATION HELPERS
+ ***********************/
+function getOrCreateSheet_(name) {
+  const ss = SpreadsheetApp.getActive();
+  let sheet = ss.getSheetByName(name);
+  return sheet ? sheet : ss.insertSheet(name);
+}
+
+// Used when ALLOW_SHEET_RESET = true
+function recreateSheet_(name) {
+  const ss = SpreadsheetApp.getActive();
+  const existing = ss.getSheetByName(name);
+  if (existing) ss.deleteSheet(existing);
+  return ss.insertSheet(name);
+}
+
+/***********************
+ * SHUFFLE (Fisher-Yates)
+ ***********************/
+function shuffle_(array) {
+  const arr = array.slice(); // prevent mutation
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/***********************
+ * SAFE CELL CLEAR
+ * Clears a range but preserves formatting.
+ ***********************/
+function clearValues_(range) {
+  range.clear({contentsOnly: true});
+}
+/***********************
+ * HIDE ANSWER COLUMNS
+ * Hides columns storing correct answers + internal IDs.
+ ***********************/
+function hideAnswerColumns_(sheet) {
+  sheet.hideColumns(COL_Q_CORRECT); // correct answer
+  sheet.hideColumns(COL_Q_ID);      // question ID
+}
+
+/***********************
+ * SHOW ANSWER COLUMNS (admin only)
+ ***********************/
+function showAnswerColumns_(sheet) {
+  sheet.showColumns(COL_Q_CORRECT);
+  sheet.showColumns(COL_Q_ID);
+}
+
+/***********************
+ * VALIDATE CHOICE
+ * Ensures choice cell contains "A", "B", or "C".
+ ***********************/
+function validateChoice_(choice) {
+  if (!choice || ["A", "B", "C"].indexOf(choice) === -1) {
+    throw new Error("Please select a valid strategy (A, B, or C) before running this chapter.");
+  }
+  return choice;
+}
+
+/***********************
+ * CLEAR ANSWER CELLS (for resetting or reruns)
+ ***********************/
+function clearChapterAnswers_(sheet) {
+  CHAPTER_Q_ROWS.forEach(row => {
+    sheet.getRange(row, COL_Q_ANSWER).setValue("");
+    sheet.getRange(row, COL_Q_CORRECT).setValue("");
+    sheet.getRange(row, COL_Q_ID).setValue("");
+  });
+}
+
+function clearFinalAnswers_(sheet) {
+  FINAL_Q_ROWS.forEach(row => {
+    sheet.getRange(row, COL_Q_ANSWER).setValue("");
+    sheet.getRange(row, COL_Q_CORRECT).setValue("");
+    sheet.getRange(row, COL_Q_ID).setValue("");
+  });
+}
+
+/***********************
+ * APPLY DATA VALIDATION (A/B/C/D only)
+ ***********************/
+function applyAnswerValidation_(sheet, rowsArr) {
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(["A","B","C","D"], true)
+    .setAllowInvalid(false)
+    .build();
+
+  rowsArr.forEach(row => {
+    sheet.getRange(row, COL_Q_ANSWER).setDataValidation(rule);
+  });
+}
+/***********************************************************
+ * PART 3 — MENU SYSTEM
+ * Creates the "Bow Sports Simulation" menu in Google Sheets.
+ *
+ * Menu Items:
+ *  - Setup Simulation
+ *  - Run Chapter 1–5
+ *  - Check Chapter 1–5
+ *  - Run Final Check
+ *  - Check Final Check
+ *  - Reset Simulation (admin)
+ ***********************************************************/
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("Bow Sports Simulation")
+    .addItem("Setup Simulation", "setupSimulation")
+    .addSeparator()
+    .addSubMenu(
+      SpreadsheetApp.getUi()
+        .createMenu("Run Chapters")
+        .addItem("Run Chapter 1", "runChapter1")
+        .addItem("Run Chapter 2", "runChapter2")
+        .addItem("Run Chapter 3", "runChapter3")
+        .addItem("Run Chapter 4", "runChapter4")
+        .addItem("Run Chapter 5", "runChapter5")
+    )
+    .addSubMenu(
+      SpreadsheetApp.getUi()
+        .createMenu("Check Chapters")
+        .addItem("Check Chapter 1", "checkChapter1")
+        .addItem("Check Chapter 2", "checkChapter2")
+        .addItem("Check Chapter 3", "checkChapter3")
+        .addItem("Check Chapter 4", "checkChapter4")
+        .addItem("Check Chapter 5", "checkChapter5")
+    )
+    .addSeparator()
+    .addItem("Run Final Check", "runFinalCheck")
+    .addItem("Check Final Check", "checkFinalCheck")
+    .addSeparator()
+    .addItem("Reset Simulation (Admin)", "resetSimulation")
+    .addToUi();
+}
+
+
+/***********************************************************
+ * PART 4 — SHEET SETUP / LAYOUT ENGINE
+ * Builds all sheets used in the Module 3 Final Simulation.
+ *
+ * Creates:
+ *  - Setup sheet
+ *  - 5 Chapter sheets
+ *  - Final Check sheet
+ *  - StudentData
+ *  - SystemLog
+ *
+ * Applies:
+ *  - Formatting
+ *  - Column widths
+ *  - Titles / headers
+ *  - Narrative space
+ *  - Choice section
+ *  - Outcome area
+ *  - MCQ table
+ *  - Hidden columns (correct answers + IDs)
+ ***********************************************************/
+
+function setupSimulation() {
+  const ss = SpreadsheetApp.getActive();
+
+  /*******************************************************
+   * CREATE OR RECREATE SHEETS
+   *******************************************************/
+  let setupSheet, finalSheet, studentSheet, logSheet;
+  const chapterSheets = [];
+
+  if (ALLOW_SHEET_RESET) {
+    setupSheet   = recreateSheet_(SHEET_SETUP);
+    finalSheet   = recreateSheet_(SHEET_FINAL);
+    studentSheet = recreateSheet_(SHEET_STUDENT);
+    logSheet     = recreateSheet_(SHEET_SYSTEMLOG);
+
+    for (let c = 1; c <= 5; c++) {
+      const sheet = recreateSheet_(CHAPTER_SHEETS[c]);
+      chapterSheets.push(sheet);
+    }
+  } else {
+    setupSheet   = getOrCreateSheet_(SHEET_SETUP);
+    finalSheet   = getOrCreateSheet_(SHEET_FINAL);
+    studentSheet = getOrCreateSheet_(SHEET_STUDENT);
+    logSheet     = getOrCreateSheet_(SHEET_SYSTEMLOG);
+
+    for (let c = 1; c <= 5; c++) {
+      const sheet = getOrCreateSheet_(CHAPTER_SHEETS[c]);
+      chapterSheets.push(sheet);
+    }
+  }
+
+  /*******************************************************
+   * FORMAT SETUP SHEET
+   *******************************************************/
+  setupSheet.clear();
+  setupSheet.setColumnWidths(1, 3, 300);
+  setupSheet.getRange("A1").setValue("Module 3 Final Activity — Setup");
+  setupSheet.getRange("A1").setFontSize(20).setFontWeight("bold")
+    .setBackground(COLOR_HEADER_BG).setFontColor(COLOR_HEADER_TEXT);
+  setupSheet.getRange("A3").setValue(
+    "Use the Bow Sports Simulation menu to:\n" +
+    "- Run chapters\n" +
+    "- Check answers\n" +
+    "- Complete the Final Check\n" +
+    "- Review automated emails\n\n" +
+    "Before beginning, please run: Bow Sports Simulation → Setup Simulation"
+  );
+  setupSheet.getRange("A3").setFontSize(12).setWrap(true);
+
+  /*******************************************************
+   * FORMAT STUDENTDATA
+   *******************************************************/
+  studentSheet.clear();
+  studentSheet.appendRow([
+    "Timestamp", "User Email", "Chapter", "Score", "Passed?", "Choice", "Details"
+  ]);
+  studentSheet.getRange("A1:G1")
+    .setBackground(COLOR_HEADER_BG)
+    .setFontColor(COLOR_HEADER_TEXT)
+    .setFontWeight("bold");
+
+  /*******************************************************
+   * FORMAT SYSTEMLOG
+   *******************************************************/
+  logSheet.clear();
+  logSheet.appendRow(["Timestamp", "Event", "Details"]);
+  logSheet.getRange("A1:C1")
+    .setBackground(COLOR_HEADER_BG)
+    .setFontColor(COLOR_HEADER_TEXT)
+    .setFontWeight("bold");
+
+  /*******************************************************
+   * LAYOUT FOR CHAPTER SHEETS
+   *******************************************************/
+  chapterSheets.forEach((sheet, i) => {
+    const chapterNum = i + 1;
+
+    sheet.clear();
+    sheet.setColumnWidths(1, 5, 250);
+
+    // Title
+    sheet.getRange("A1").setValue(CHAPTER_SHEETS[chapterNum]);
+    sheet.getRange("A1").setFontSize(20).setFontWeight("bold")
+      .setBackground(COLOR_HEADER_BG).setFontColor(COLOR_HEADER_TEXT);
+
+    // Narrative area
+    sheet.getRange("A3").setValue("Narrative:").setFontWeight("bold");
+    sheet.getRange("A4:A8").setWrap(true);
+    // Narrative in A5 (your choice #1A)
+    sheet.getRange("A5").setValue(getChapterNarrative_(chapterNum));
+
+    // Outcome area (label in A7, text in A8 per choice #2B)
+    sheet.getRange("A7").setValue("Outcome:").setFontWeight("bold");
+    sheet.getRange("A8").setWrap(true);
+    sheet.getRange("A8").setValue(""); // will be filled by runChapter_
+
+    // Choice area
+    sheet.getRange("A10").setValue("Choose your strategy (A, B, or C):");
+    sheet.getRange("A10").setFontWeight("bold");
+
+    const dvChoice = SpreadsheetApp.newDataValidation()
+      .requireValueInList(["A", "B", "C"], true)
+      .setAllowInvalid(false)
+      .build();
+    sheet.getRange("B10").setDataValidation(dvChoice);
+    sheet.getRange("B10").setValue("");
+
+    // MCQ table — CHAPTER_Q_ROWS = [14,18,22,26,30]
+    CHAPTER_Q_ROWS.forEach((row, idx) => {
+      // Header row above each question
+      sheet.getRange(row - 1, 1)
+        .setValue("Question " + (idx + 1))
+        .setFontWeight("bold");
+
+      // Question text row (A)
+      sheet.getRange(row, COL_Q_TEXT).setValue("");
+
+      // Options block row (A on row+1)
+      sheet.getRange(row + 1, COL_Q_TEXT).setValue("");
+
+      // Student answer (C), correct (D), ID (E)
+      sheet.getRange(row, COL_Q_ANSWER).setValue("");
+      sheet.getRange(row, COL_Q_CORRECT).setValue("");
+      sheet.getRange(row, COL_Q_ID).setValue("");
+    });
+
+    hideAnswerColumns_(sheet);
+  });
+
+  /*******************************************************
+   * FORMAT FINAL CHECK SHEET
+   *******************************************************/
+  finalSheet.clear();
+  finalSheet.setColumnWidths(1, 5, 250);
+
+  finalSheet.getRange("A1").setValue("Module 3 Final — Final Check");
+  finalSheet.getRange("A1").setFontSize(20).setFontWeight("bold")
+    .setBackground(COLOR_HEADER_BG).setFontColor(COLOR_HEADER_TEXT);
+
+  FINAL_Q_ROWS.forEach((row, idx) => {
+    finalSheet.getRange(row - 1, 1)
+      .setValue("Question " + (idx + 1))
+      .setFontWeight("bold");
+
+    finalSheet.getRange(row, COL_Q_TEXT).setValue("");
+    finalSheet.getRange(row + 1, COL_Q_TEXT).setValue("");
+    finalSheet.getRange(row, COL_Q_ANSWER).setValue("");
+    finalSheet.getRange(row, COL_Q_CORRECT).setValue("");
+    finalSheet.getRange(row, COL_Q_ID).setValue("");
+  });
+
+  hideAnswerColumns_(finalSheet);
+
+  /*******************************************************
+   * LOG SETUP COMPLETE
+   *******************************************************/
+  logEvent_("Setup", "Simulation layout successfully created.");
+
+  ss.toast("Simulation setup complete!", "Done", 4);
+}
+/***********************************************************
+ * PART 5 — CONTENT ENGINE (FRAMEWORK ONLY)
+ * 
+ * This block sets up the structure for:
+ *  - Narratives
+ *  - Outcomes
+ *  - MCQ storage
+ *  - Final Check storage
+ *  - Randomization utilities
+ *  - Accessor functions
+ *
+ * MCQs will be added in Parts 5B–5E.
+ ***********************************************************/
+
+
+/*******************************************************
+ * NARRATIVES (1–5)
+ *******************************************************/
+const CHAPTER_NARRATIVES = {
+  1: "",
+  2: "",
+  3: "",
+  4: "",
+  5: ""
+};
+/***************************************************************
+ * STRATEGY TEXT FOR EACH CHAPTER
+ ***************************************************************/
+const CHAPTER_STRATEGY_TEXT = {
+  1: {
+    A: "Hire a polished but uncertain candidate.",
+    B: "Choose the transparent, predictable worker.",
+    C: "Adopt early automation to expand capacity."
+  },
+  2: {
+    A: "Fully automate operations.",
+    B: "Use a hybrid system (automation + human oversight).",
+    C: "Scale rapidly using freelancers."
+  },
+  3: {
+    A: "Invest heavily in employee training.",
+    B: "Outsource specialized tasks to external experts.",
+    C: "Build a structured internal workflow system."
+  },
+  4: {
+    A: "Centralize decision-making authority.",
+    B: "Decentralize teams for autonomy.",
+    C: "Implement a data-driven decision system."
+  },
+  5: {
+    A: "Pursue stability-first planning.",
+    B: "Build contingency plans for multiple scenarios.",
+    C: "Develop long-term resilience systems."
+  }
+};
+
+
+/*******************************************************
+ * OUTCOMES (A/B/C × chapters 1–5)
+ *******************************************************/
+const CHAPTER_OUTCOMES = {
+  1: { A: "", B: "", C: "" },
+  2: { A: "", B: "", C: "" },
+  3: { A: "", B: "", C: "" },
+  4: { A: "", B: "", C: "" },
+  5: { A: "", B: "", C: "" }
+};
+
+
+/*******************************************************
+ * MCQ STORAGE
+ * Structure:
+ * CHAPTER_QUESTIONS[chapter][choice] = [ {q, o[], c}, ... ]
+ *******************************************************/
+const CHAPTER_QUESTIONS = {
+  1: { A: [], B: [], C: [] },
+  2: { A: [], B: [], C: [] },
+  3: { A: [], B: [], C: [] },
+  4: { A: [], B: [], C: [] },
+  5: { A: [], B: [], C: [] }
+};
+
+
+/*******************************************************
+ * FINAL CHECK (10 MCQs)
+ *******************************************************/
+const FINAL_QUESTIONS = [];
+/***********************************************************
+ * PART 5G — FINAL CHECK QUESTIONS (10 MCQs)
+ * Purpose: Cross-chapter economic understanding
+ * Difficulty mix:
+ *  - 3 standard
+ *  - 4 harder
+ *  - 3 very challenging
+ ***********************************************************/
+
+FINAL_QUESTIONS.push(
+
+  // ===== STANDARD (3) =====
+  {
+    q: "When a company hires or contracts without fully understanding a worker’s true ability, which economic concept best explains the risk that results?",
+    o: [
+      "Information asymmetry, where one party knows more than the other",
+      "Opportunity cost, due to limited resources",
+      "Diminishing returns from overinvestment",
+      "Optimization through efficiency gains"
+    ],
+    c: "A"
+  },
+
+  {
+    q: "As organizations scale, why do efficiency gains often slow even when more resources are added?",
+    o: [
+      "Early improvements are easier, while later gains face diminishing returns",
+      "Efficiency always increases linearly with investment",
+      "Variance in outcomes disappears at scale",
+      "Marginal cost eventually reaches zero"
+    ],
+    c: "A"
+  },
+
+  {
+    q: "Which factor most directly increases variability in business outcomes over time?",
+    o: [
+      "Uncertainty caused by inconsistent information and processes",
+      "Clearly defined incentives and roles",
+      "Standardized workflows and systems",
+      "Predictable inputs and outputs"
+    ],
+    c: "A"
+  },
+
+  // ===== SLIGHTLY HARDER (4) =====
+  {
+    q: "Why can automation simultaneously improve efficiency while also increasing volatility in results?",
+    o: [
+      "It excels at routine tasks but struggles with edge cases and nuance",
+      "It eliminates the need for oversight",
+      "It guarantees consistent output",
+      "It removes decision-making entirely"
+    ],
+    c: "A"
+  },
+
+  {
+    q: "A company chooses a stable but rigid strategy instead of a flexible one. From an economic perspective, what cost is primarily incurred?",
+    o: [
+      "Opportunity cost from limiting future options",
+      "Higher variance in outcomes",
+      "Information asymmetry",
+      "Automation inefficiency"
+    ],
+    c: "A"
+  },
+
+  {
+    q: "Why does high variance make expected value more difficult to rely on when making decisions?",
+    o: [
+      "Actual outcomes fluctuate widely around the average result",
+      "Expected value stops existing",
+      "Risk is eliminated",
+      "Information becomes perfect"
+    ],
+    c: "A"
+  },
+
+  {
+    q: "Decentralized decision-making can improve speed but also introduce risk. Why?",
+    o: [
+      "Different teams may make inconsistent decisions with uneven quality",
+      "Central authority becomes stronger",
+      "Automation removes coordination needs",
+      "Processes automatically standardize"
+    ],
+    c: "A"
+  },
+
+  // ===== MUCH HARDER (3) =====
+ {
+  q: "A company upgrades its optimization software to improve efficiency, but total output remains unchanged. Which conclusion best explains why the investment failed to increase performance?",
+  o: [
+    "The optimization targeted an area that was not limiting overall production",
+    "The organization eliminated all remaining inefficiencies",
+    "Expected value became unpredictable due to automation",
+    "Variance outweighed any gains from optimization"
+  ],
+  c: "A"
+},
+
+  {
+    q: "Why might a resilience-focused organization experience lower short-term performance but higher long-term expected value?",
+    o: [
+      "It absorbs negative shocks and reduces downside risk over time",
+      "It eliminates uncertainty entirely",
+      "It maximizes immediate efficiency",
+      "It relies on perfect forecasting"
+    ],
+    c: "A"
+  },
+
+  {
+    q: "Across all chapters, which tradeoff most accurately captures the challenge of scaling organizations?",
+    o: [
+      "Efficiency versus flexibility under uncertainty",
+      "Cost versus revenue",
+      "Automation versus employment",
+      "Speed versus legality"
+    ],
+    c: "A"
+  }
+
+);
+
+
+/*******************************************************
+ * RANDOMIZE OPTION ORDER
+ *******************************************************/
+function randomizeOptions_(qObj) {
+  const letters = ["A", "B", "C", "D"];
+
+// Build array of {text, isCorrect}
+const originalCorrectIndex = letters.indexOf(qObj.c);  
+const pairs = qObj.o.map((text, i) => ({
+  text: text,
+  isCorrect: i === originalCorrectIndex
+}));
+
+// Shuffle while keeping track of which item is correct
+const shuffled = shuffle_(pairs);
+
+// After shuffle, find new correct location
+const correctIndex = shuffled.findIndex(p => p.isCorrect);
+const correctLetter = letters[correctIndex];
+
+// Build displayed block (A/B/C/D)
+const optionBlock = shuffled
+  .map((p, i) => `${letters[i]}) ${p.text}`)
+  .join("\n");
+
+return {
+  question: qObj.q,
+  optionsBlock: optionBlock,
+  correct: correctLetter
+};
+}
+
+
+/*******************************************************
+ * ACCESSOR FUNCTIONS
+ *******************************************************/
+ /***************************************************************
+ * NARRATIVE + STRATEGY BUILDER
+ ***************************************************************/
+function getChapterNarrative_(chapterNum) {
+  const base = CHAPTER_NARRATIVES[chapterNum] || "";
+
+  const strategies = CHAPTER_STRATEGY_TEXT[chapterNum] || {
+    A: "Strategy A description missing",
+    B: "Strategy B description missing",
+    C: "Strategy C description missing"
+  };
+
+  return (
+    base.trim() +
+    "\n\n" +
+    "Choose your strategy:\n" +
+    "A — " + strategies.A + "\n" +
+    "B — " + strategies.B + "\n" +
+    "C — " + strategies.C
+  );
+}
+
+function getChapterOutcome_(chapter, choice) {
+  return CHAPTER_OUTCOMES[chapter][choice];
+}
+
+function getChapterQuestions_(chapter, choice) {
+  return CHAPTER_QUESTIONS[chapter][choice];
+}
+
+function getFinalQuestions_() {
+  return FINAL_QUESTIONS;
+}
+function runChapter_(chapterNum) {
+  const sheet = getChapterSheet_(chapterNum);
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("Cannot find sheet: " + CHAPTER_SHEETS[chapterNum]);
+    return;
+  }
+
+  // Read student choice (A/B/C)
+  const choice = sheet.getRange("B10").getValue().toString().trim().toUpperCase();
+  if (!["A", "B", "C"].includes(choice)) {
+    SpreadsheetApp.getUi().alert("Please select a valid choice (A, B, or C) before running the chapter.");
+    return;
+  }
+
+  /************ Load Outcome ONLY (we do NOT touch narrative per choice #5B) ************/
+  const outcome = getChapterOutcome_(chapterNum, choice);
+  sheet.getRange("A8").setValue(outcome);
+
+  /************ Load MCQs (choice-specific) ************/
+  const fullBank = getChapterQuestions_(chapterNum, choice);
+  if (!fullBank || fullBank.length < 5) {
+    SpreadsheetApp.getUi().alert("Not enough MCQs built for Chapter " + chapterNum + " choice " + choice);
+    return;
+  }
+
+  // Randomize and pick 5
+  const selected = shuffle_(fullBank).slice(0, 5);
+
+  /************ Write Questions & Answer Choices ************/
+  selected.forEach((qObj, i) => {
+    const row = CHAPTER_Q_ROWS[i];
+
+    // Randomize options for the student
+    const randomized = randomizeOptions_(qObj);
+
+    // Question text
+    sheet.getRange(row, COL_Q_TEXT).setValue(randomized.question);
+
+    // Options block on the row below
+    sheet.getRange(row + 1, COL_Q_TEXT).setValue(randomized.optionsBlock);
+
+    // Hidden correct answer
+    sheet.getRange(row, COL_Q_CORRECT).setValue(randomized.correct);
+
+    // Clear student's old answer + ID
+    sheet.getRange(row, COL_Q_ANSWER).setValue("");
+    sheet.getRange(row, COL_Q_ID).setValue(qObj.id || "");
+  });
+
+  /************ Build dropdown validation (A/B/C/D) ************/
+  applyAnswerValidation_(sheet, CHAPTER_Q_ROWS);
+
+  SpreadsheetApp.getActive().toast(
+    "Chapter " + chapterNum + " is ready.",
+    "Loaded",
+    4
+  );
+
+  logEvent_("CHAPTER_LOADED", "Chapter " + chapterNum + " loaded with choice " + choice);
+}
+
+
+
+/***********************************************************
+ * PART 5B — CHAPTER 1 CONTENT
+ ***********************************************************/
+
+/***********************
+ * Narrative
+ ***********************/
+CHAPTER_NARRATIVES[1] = `
+Your startup is gaining traction faster than expected. You’re juggling product development,
+customer communication, and analytics — and you can’t keep pace. You must expand capacity,
+but uncertainty is high. Your hiring or automation decision will shape how effectively
+the business can scale.
+`;
+
+/***********************
+ * Outcomes A/B/C
+ ***********************/
+CHAPTER_OUTCOMES[1].A = `
+The polished candidate impresses early but lacks key skills. Performance becomes inconsistent.
+You face increased uncertainty and information asymmetry.
+`;
+
+CHAPTER_OUTCOMES[1].B = `
+The transparent candidate delivers steady, predictable work. Efficiency improves through
+clarity and lower information asymmetry.
+`;
+
+CHAPTER_OUTCOMES[1].C = `
+Automation handles simple tasks well but misfires on nuance. Efficiency rises but variance increases.
+`;
+
+/***********************
+ * MCQs — CHOICE A
+ ***********************/
+CHAPTER_QUESTIONS[1].A = [
+  { q: "Which concept explains uncertainty when hiring someone with unclear skills?",
+    o: ["Information asymmetry", "Diminishing returns", "Efficiency", "Optimization"], c: "A" },
+
+  { q: "Why does limited information increase hiring risk?",
+    o: ["You know less about true ability", "Training removes uncertainty", "Automation is always better", "Output is guaranteed"], c: "A" },
+
+  { q: "When a candidate oversells their ability, expected value becomes:",
+    o: ["Harder to predict", "Automatically higher", "Zero", "Unaffected"], c: "A" },
+
+  { q: "Why might a polished candidate deliver inconsistent results?",
+    o: ["Hidden gaps reduce reliability", "Training causes risk", "Automation outperforms humans", "Efficiency cannot improve"], c: "A" },
+
+  { q: "Hiring with limited information typically leads to:",
+    o: ["Higher variance in outcomes", "Guaranteed improvement", "Lower risk", "No bottlenecks"], c: "A" }
+];
+
+/***********************
+ * MCQs — CHOICE B
+ ***********************/
+CHAPTER_QUESTIONS[1].B = [
+  { q: "Why does transparency improve efficiency?",
+    o: ["Tasks align with known strengths", "It reduces employees", "It guarantees output", "It removes cost"], c: "A" },
+
+  { q: "Honest information reduces:",
+    o: ["Risk of unexpected performance issues", "Training needs", "Decision-making", "Value of hiring"], c: "A" },
+
+  { q: "Clear evidence of past work increases expected value because:",
+    o: ["Future outcomes are easier to predict", "Cost drops to zero", "Automation is required", "Uncertainty disappears"], c: "A" },
+
+  { q: "Why do consistent employees stabilize workflow?",
+    o: ["Predictability improves planning", "They replace strategy", "Automation is unnecessary", "Opportunity cost vanishes"], c: "A" },
+
+  { q: "Choosing transparency primarily reflects:",
+    o: ["Reducing information asymmetry", "Maximizing returns", "Eliminating risk", "Increasing volatility"], c: "A" }
+];
+
+/***********************
+ * MCQs — CHOICE C
+ ***********************/
+CHAPTER_QUESTIONS[1].C = [
+  { q: "Why do automation tools sometimes show inconsistent productivity?",
+    o: ["Good at simple tasks, weak at nuance", "They replace decision-making", "They outperform all workers", "They eliminate uncertainty"], c: "A" },
+
+  { q: "Automation misfires reflect:",
+    o: ["Variance in expected value", "Zero risk", "Perfect information", "Infinite efficiency"], c: "A" },
+
+  { q: "Why do automation tools face diminishing returns?",
+    o: ["Early tasks automate easily, later tasks do not", "They always slow down", "They remove human labor", "They zero out opportunity cost"], c: "A" },
+
+  { q: "Why might the tool still be valuable?",
+    o: ["It frees humans for higher-level tasks", "It guarantees accuracy", "It requires no oversight", "It removes bottlenecks"], c: "A" },
+
+  { q: "Purchasing automation changes:",
+    o: ["Cost structure and efficiency pattern", "Legal status", "Office size", "Revenue model"], c: "A" }
+];
+/***********************************************************
+ * PART 5C — CHAPTER 2 CONTENT
+ ***********************************************************/
+
+/***********************
+ * Narrative
+ ***********************/
+CHAPTER_NARRATIVES[2] = `
+Workload has increased again. Some tasks flow smoothly, others cause bottlenecks.
+You must decide how to scale: fully automate, maintain a hybrid system, or add
+freelancers. Each path has unique efficiency tradeoffs and uncertainty.
+`;
+
+/***********************
+ * Outcomes A/B/C
+ ***********************/
+CHAPTER_OUTCOMES[2].A = `
+The full automation suite boosts high-volume tasks but struggles with edge cases.
+Productivity becomes high but volatile.
+`;
+
+CHAPTER_OUTCOMES[2].B = `
+The hybrid system stabilizes workflow. Balanced automation plus human oversight
+reduces variance and increases reliability.
+`;
+
+CHAPTER_OUTCOMES[2].C = `
+Freelancers expand capacity quickly but coordination becomes difficult.
+Efficiency grows unevenly with diminishing returns.
+`;
+
+/***********************
+ * MCQs — CHOICE A (Full Automation Suite)
+ ***********************/
+CHAPTER_QUESTIONS[2].A = [
+  { q: "Why does a powerful automation tool sometimes produce inconsistent results?",
+    o: ["It handles simple tasks well but struggles with complex ones", "Automation eliminates uncertainty", "Humans are always more efficient", "Automation tools do not vary in performance"], c: "A" },
+
+  { q: "Which concept describes strong early gains from automation that taper off?",
+    o: ["Diminishing returns", "Information asymmetry", "Opportunity cost", "Constant marginal value"], c: "A" },
+
+  { q: "Why is expected value harder to predict with full automation?",
+    o: ["Performance varies across task types", "Automation removes uncertainty", "Variance does not affect outcomes", "Output is guaranteed"], c: "A" },
+
+  { q: "A sudden jump in productivity one day followed by errors the next reflects:",
+    o: ["High variance around expected value", "Low risk", "Perfect efficiency", "Eliminated bottlenecks"], c: "A" },
+
+  { q: "The main tradeoff of full automation in early-stage startups is:",
+    o: ["High efficiency with higher volatility", "Guaranteed output", "Reduced planning needs", "Elimination of risk"], c: "A" }
+];
+
+/***********************
+ * MCQs — CHOICE B (Hybrid System)
+ ***********************/
+CHAPTER_QUESTIONS[2].B = [
+  { q: "Why does combining automation with human oversight reduce risk?",
+    o: ["Humans catch errors automation misses", "It eliminates all uncertainty", "It removes the need for automation", "It guarantees higher output"], c: "A" },
+
+  { q: "The hybrid system creates stable workflows because:",
+    o: ["Automated tasks are supported by human judgment", "Humans are always faster", "Automation replaces labor entirely", "Risk disappears"], c: "A" },
+
+  { q: "Why is expected value more predictable in the hybrid approach?",
+    o: ["Balance reduces variance", "Expected value becomes irrelevant", "Variance increases with humans", "Risk increases"], c: "A" },
+
+  { q: "A moderate tool paired with human oversight reflects what concept?",
+    o: ["Optimization under uncertainty", "Infinite efficiency", "Information asymmetry", "Zero marginal value"], c: "A" },
+
+  { q: "Why does the hybrid system avoid extreme spikes or crashes in productivity?",
+    o: ["Human review smooths performance", "The tool guarantees perfect output", "Diminishing returns vanish", "Risk becomes zero"], c: "A" }
+];
+
+/***********************
+ * MCQs — CHOICE C (Freelancers)
+ ***********************/
+CHAPTER_QUESTIONS[2].C = [
+  { q: "Why do additional freelancers become less effective at scale?",
+    o: ["Coordination costs rise, creating diminishing returns", "Each freelancer adds equal output", "Freelancers remove tasks from the system", "Risk drops as team size grows"], c: "A" },
+
+  { q: "Why does relying on freelancers increase information asymmetry?",
+    o: ["You don’t fully know their reliability or process", "They always reveal their full workflow", "Output is guaranteed", "Automation fills information gaps"], c: "A" },
+
+  { q: "What happens when too many freelancers work on overlapping tasks?",
+    o: ["Efficiency slows due to coordination overhead", "Efficiency automatically increases", "Variability disappears", "Opportunity cost is eliminated"], c: "A" },
+
+  { q: "Hiring many freelancers at once can shift bottlenecks because:",
+    o: ["Communication overhead grows", "Additional workers eliminate risk", "They always improve workflow", "Marginal gains are infinite"], c: "A" },
+
+  { q: "Which concept explains why early freelancers help a lot but later ones help little?",
+    o: ["Diminishing returns", "Perfect information", "Zero risk", "Infinite efficiency"], c: "A" }
+];
+/***********************************************************
+ * PART 5D — CHAPTER 3 CONTENT
+ ***********************************************************/
+
+/***********************
+ * Narrative
+ ***********************/
+CHAPTER_NARRATIVES[3] = `
+As the organization expands, workflow inconsistencies grow. You face a strategic
+choice: deepen skills with training, outsource specialized tasks, or build a more
+structured internal system. Your decision affects long-term optimization and how
+effectively the organization scales during increased complexity.
+`;
+
+/***********************
+ * Outcomes A/B/C
+ ***********************/
+CHAPTER_OUTCOMES[3].A = `
+Training improves team capabilities, but gains diminish over time. Bottlenecks begin
+shifting from skills themselves to organizational structure and systems.
+`;
+
+CHAPTER_OUTCOMES[3].B = `
+Outsourcing removes specialized roadblocks but increases coordination cost and
+information asymmetry with external contributors.
+`;
+
+CHAPTER_OUTCOMES[3].C = `
+The new internal workflow system is slow at first but becomes highly efficient once
+adopted. Long-term optimization improves steadily as processes standardize.
+`;
+
+/***********************
+ * MCQs — CHOICE A (Training Investment)
+ ***********************/
+CHAPTER_QUESTIONS[3].A = [
+  { q: "Why do training programs show diminishing returns over time?",
+    o: ["Employees master basics early so later gains are smaller", "Training always increases output equally", "Human capital cannot improve", "Training eliminates all risk"], c: "A" },
+
+  { q: "Why does investing in employees improve workflow stability?",
+    o: ["Skill development reduces variability in task performance", "It guarantees automation-level speed", "It eliminates oversight needs", "It reduces information asymmetry permanently"], c: "A" },
+
+  { q: "Why is expected value of training relatively predictable?",
+    o: ["Inputs and employee baseline skills are well understood", "Training outcomes are random", "Outsourcing removes uncertainty", "Automation stabilizes value"], c: "A" },
+
+  { q: "Training reflects which economic idea?",
+    o: ["Investing in human capital", "Maximizing coordination costs", "Eliminating diminishing returns", "Increasing information asymmetry"], c: "A" },
+
+  { q: "Why might training fail to remove all bottlenecks?",
+    o: ["Some bottlenecks are structural, not skill-based", "Training guarantees perfect efficiency", "More employees always remove bottlenecks", "Quality increases eliminate constraints"], c: "A" }
+];
+
+/***********************
+ * MCQs — CHOICE B (Outsourcing Specialists)
+ ***********************/
+CHAPTER_QUESTIONS[3].B = [
+  { q: "Why does outsourcing increase information asymmetry?",
+    o: ["You cannot fully observe contractor reliability or workflow", "Contractors reveal full information always", "Employees hide more information", "Automation fills knowledge gaps"], c: "A" },
+
+  { q: "Outsourcing often increases efficiency initially because:",
+    o: ["Experts resolve bottlenecks rapidly", "Contractors eliminate all uncertainty", "Quality is always guaranteed", "Internal workers become unnecessary"], c: "A" },
+
+  { q: "Why do coordination costs rise when outsourcing?",
+    o: ["External specialists must align with internal processes", "Outsourcing reduces need for communication", "Extra capacity always reduces cost", "Expected value becomes constant"], c: "A" },
+
+  { q: "Why is outsourcing’s expected value volatile?",
+    o: ["Quality varies widely across contractors", "Contractor skills are uniform", "Variance only appears internally", "Diminishing returns disappear"], c: "A" },
+
+  { q: "Why may outsourcing shift bottlenecks instead of removing them?",
+    o: ["Internal teams must coordinate outputs with external contributors", "Outsourcing removes all dependencies", "Contractors control all decisions", "Specialized work removes oversight"], c: "A" }
+];
+
+/***********************
+ * MCQs — CHOICE C (Internal Workflow System)
+ ***********************/
+CHAPTER_QUESTIONS[3].C = [
+  { q: "Why does implementing a new workflow system improve consistency long-term?",
+    o: ["Standardization reduces confusion and errors", "Systems remove need for employees", "Automation replaces structure", "It guarantees immediate efficiency"], c: "A" },
+
+  { q: "Slow early performance during system adoption reflects what idea?",
+    o: ["Upfront cost before long-term benefit", "Perfect information", "Infinite marginal returns", "Zero coordination cost"], c: "A" },
+
+  { q: "Why does expected value improve as the system matures?",
+    o: ["Variance decreases as teams master the process", "Expected value is fixed over time", "Workers avoid using the system", "Systems produce infinite efficiency"], c: "A" },
+
+  { q: "Workflow systems help optimize production because:",
+    o: ["They make processes predictable and repeatable", "They remove uncertainty entirely", "They eliminate diminishing returns", "They replace human capital"], c: "A" },
+
+  { q: "Slow early adoption followed by steady improvement illustrates:",
+    o: ["Delayed but increasing marginal returns", "Immediate optimization", "Zero-cost implementation", "Permanent inefficiency"], c: "A" }
+];
+/***********************************************************
+ * PART 5E — CHAPTER 4 CONTENT
+ ***********************************************************/
+
+/***********************
+ * Narrative
+ ***********************/
+CHAPTER_NARRATIVES[4] = `
+With core systems established, the organization now faces rising operational
+friction. Coordination is inefficient, decisions bottleneck through a small number
+of people, and growth depends on whether you centralize authority, decentralize
+teams, or implement a structured data-driven decision model. Each path changes
+how work flows and how quickly the organization can adapt to new challenges.
+`;
+
+/***********************
+ * Outcomes A/B/C
+ ***********************/
+CHAPTER_OUTCOMES[4].A = `
+Centralization initially speeds up decisions because authority is concentrated,
+but over time it creates hierarchical bottlenecks as workload grows.
+`;
+
+CHAPTER_OUTCOMES[4].B = `
+Decentralizing teams increases autonomy and responsiveness, but raises coordination
+and monitoring costs. Information becomes harder to synchronize across units.
+`;
+
+CHAPTER_OUTCOMES[4].C = `
+A data-driven decision model reduces subjective errors and improves long-term
+efficiency. However, implementation requires new systems, training, and initial
+slowdowns as teams adopt evidence-based workflows.
+`;
+
+/***********************
+ * MCQs — CHOICE A (Centralize Decision-Making)
+ ***********************/
+CHAPTER_QUESTIONS[4].A = [
+  {
+    q: "Why does centralizing authority initially improve decision speed?",
+    o: [
+      "Fewer people make the decisions, reducing friction",
+      "More meetings automatically increase throughput",
+      "Information systems become unnecessary",
+      "Decentralization always slows down teams"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why do centralized structures create long-term bottlenecks?",
+    o: [
+      "One decision-maker becomes overloaded as complexity increases",
+      "Workload always shrinks over time",
+      "Employees gain perfect information",
+      "Centralization eliminates all communication costs"
+    ],
+    c: "A"
+  },
+  {
+    q: "Centralized organizations often struggle with:",
+    o: [
+      "Scalability — decision load does not scale with team size",
+      "Reduced visibility across all processes",
+      "Coordination costs dropping too low",
+      "Infinite decision-making bandwidth"
+    ],
+    c: "A"
+  },
+  {
+    q: "Centralization increases risk because:",
+    o: [
+      "Decision errors affect the entire system",
+      "Smaller teams always work slower",
+      "Expected value becomes fixed",
+      "Variance disappears when leaders concentrate decisions"
+    ],
+    c: "A"
+  },
+  {
+    q: "What tradeoff defines centralization?",
+    o: [
+      "Faster short-term decisions vs long-term structural bottlenecks",
+      "Less information vs more automation",
+      "Greater autonomy vs less risk",
+      "Lower coordination costs vs perfect information"
+    ],
+    c: "A"
+  }
+];
+
+/***********************
+ * MCQs — CHOICE B (Decentralize Teams)
+ ***********************/
+CHAPTER_QUESTIONS[4].B = [
+  {
+    q: "Decentralization improves responsiveness because:",
+    o: [
+      "Teams act without waiting for top-level approval",
+      "It eliminates uncertainty entirely",
+      "Experts lose authority",
+      "Coordination becomes automatic"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why do coordination costs rise with decentralization?",
+    o: [
+      "Multiple teams must synchronize decisions and share information",
+      "Decision rights are perfectly aligned",
+      "Information asymmetry disappears",
+      "Teams operate with identical priorities always"
+    ],
+    c: "A"
+  },
+  {
+    q: "Which risk increases under decentralization?",
+    o: [
+      "Inconsistent decision quality across teams",
+      "Infinite marginal returns",
+      "Zero coordination overhead",
+      "Perfectly aligned incentives"
+    ],
+    c: "A"
+  },
+  {
+    q: "Decentralization aligns with which economic concept?",
+    o: [
+      "Local optimization: teams react to information closest to them",
+      "Perfect central control",
+      "Zero communication variance",
+      "Uniform incentives across unrelated tasks"
+    ],
+    c: "A"
+  },
+  {
+    q: "What is a potential long-term benefit of decentralization?",
+    o: [
+      "Innovation increases as teams experiment independently",
+      "Variance in processes disappears",
+      "Coordination cost drops to zero",
+      "Central bottlenecks strengthen"
+    ],
+    c: "A"
+  }
+];
+
+/***********************
+ * MCQs — CHOICE C (Data-Driven Model)
+ ***********************/
+CHAPTER_QUESTIONS[4].C = [
+  {
+    q: "Why does a data-driven model reduce subjective errors?",
+    o: [
+      "Decisions rely on empirical patterns rather than intuition",
+      "Teams abandon all discretion",
+      "Variance becomes irrelevant",
+      "Coordination cost drops to zero"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why is early adoption of a data system slow?",
+    o: [
+      "Employees must learn new tools and processes",
+      "Output instantly accelerates",
+      "Information becomes perfect",
+      "Training eliminates variance completely"
+    ],
+    c: "A"
+  },
+  {
+    q: "Expected value improves under a data-driven model because:",
+    o: [
+      "Decisions become more consistent and predictable",
+      "Human judgment is eliminated entirely",
+      "Short-term randomness increases",
+      "Systems remove all risk"
+    ],
+    c: "A"
+  },
+  {
+    q: "What long-term organizational effect does data-standardization create?",
+    o: [
+      "Processes become more repeatable and less error-prone",
+      "Teams reject evidence",
+      "Coordination becomes impossible",
+      "It increases information asymmetry"
+    ],
+    c: "A"
+  },
+  {
+    q: "What key tradeoff defines a data-driven transformation?",
+    o: [
+      "Upfront cost and slow adoption vs long-term consistency and optimization",
+      "Immediate productivity vs permanent slowdown",
+      "Perfect information vs subjective decision-making",
+      "Zero training vs high expertise"
+    ],
+    c: "A"
+  }
+];
+/***********************************************************
+ * PART 5F — CHAPTER 5 CONTENT
+ ***********************************************************/
+
+/***********************
+ * Narrative
+ ***********************/
+CHAPTER_NARRATIVES[5] = `
+With the organization approaching maturity, you must decide how to sustain long-term
+performance under increasing uncertainty. Stakeholder expectations rise, external
+conditions shift, and the ability to adapt becomes a strategic advantage. You can
+double down on stability, pursue flexible contingency planning, or focus on building
+long-term resilience that absorbs shocks over time. Each path carries different
+tradeoffs in risk, expected value, and organizational structure.
+`;
+
+/***********************
+ * Outcomes A/B/C
+ ***********************/
+CHAPTER_OUTCOMES[5].A = `
+Stability-first planning creates predictable operations and reduces short-term risk,
+but makes the organization slower to adapt when conditions change. Efficiency is
+high, flexibility is low.
+`;
+
+CHAPTER_OUTCOMES[5].B = `
+Contingency planning increases adaptability by preparing for multiple scenarios,
+but requires allocating resources toward plans that may never be used. Flexibility
+is high, efficiency is lower.
+`;
+
+CHAPTER_OUTCOMES[5].C = `
+A resilience-building strategy prioritizes systems that absorb shocks: diversified
+workflows, cross-trained teams, and flexible protocols. Short-term output dips, but
+long-term expected performance becomes smoother and more reliable.
+`;
+
+/***********************
+ * MCQs — CHOICE A (Stability-First Planning)
+ ***********************/
+CHAPTER_QUESTIONS[5].A = [
+  {
+    q: "Why does stability-first planning reduce short-term risk?",
+    o: [
+      "Processes are standardized and predictable",
+      "Variance increases intentionally",
+      "Information is fully decentralized",
+      "It removes all decision-making entirely"
+    ],
+    c: "A"
+  },
+  {
+    q: "What is a key downside of prioritizing stability?",
+    o: [
+      "Reduced ability to adapt when external conditions shift",
+      "Lower predictability",
+      "Higher information asymmetry",
+      "No improvements in efficiency"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why does stability-first planning create high operational efficiency?",
+    o: [
+      "Standardized routines minimize coordination costs",
+      "Teams avoid specialization",
+      "Variance in output rises sharply",
+      "Tasks are redistributed randomly"
+    ],
+    c: "A"
+  },
+  {
+    q: "From an economic perspective, stability-first systems optimize for:",
+    o: [
+      "Low volatility instead of high flexibility",
+      "High volatility and unpredictability",
+      "Infinite marginal returns",
+      "Perfect information symmetry"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why may stability planning lower long-term expected value?",
+    o: [
+      "Rigid systems cannot adjust to new opportunities or risks",
+      "Predictable routines always increase returns",
+      "Stability eliminates all external shocks",
+      "Decision-making becomes decentralized"
+    ],
+    c: "A"
+  }
+];
+
+/***********************
+ * MCQs — CHOICE B (Contingency Planning)
+ ***********************/
+CHAPTER_QUESTIONS[5].B = [
+  {
+    q: "Why does contingency planning improve adaptability?",
+    o: [
+      "Multiple scenarios are prepared in advance",
+      "Organizations follow only one rigid plan",
+      "It guarantees perfect foresight",
+      "It eliminates variance entirely"
+    ],
+    c: "A"
+  },
+  {
+    q: "What tradeoff defines contingency planning?",
+    o: [
+      "Higher flexibility vs lower efficiency from maintaining extra plans",
+      "Eliminating uncertainty vs increasing workload",
+      "Perfect information vs zero cost",
+      "Zero coordination cost vs maximum output"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why does contingency planning increase coordination complexity?",
+    o: [
+      "Teams must understand and align across multiple possible workflows",
+      "All decisions flow through one person",
+      "Information asymmetry disappears",
+      "Variance in outcomes is removed"
+    ],
+    c: "A"
+  },
+  {
+    q: "Contingency systems often require:",
+    o: [
+      "Allocating resources toward plans that may not be used",
+      "Standardizing everything to a single model",
+      "Centralizing all decisions",
+      "Avoiding forecasts"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why might contingency planning raise expected value in volatile environments?",
+    o: [
+      "It reduces downside risk by preparing for negative shocks",
+      "It guarantees perfect outcomes",
+      "It increases information asymmetry",
+      "It eliminates all coordination needs"
+    ],
+    c: "A"
+  }
+];
+
+/***********************
+ * MCQs — CHOICE C (Resilience-Building Strategy)
+ ***********************/
+CHAPTER_QUESTIONS[5].C = [
+  {
+    q: "Why does resilience-building reduce long-term volatility?",
+    o: [
+      "Systems are designed to absorb shocks before they disrupt operations",
+      "Variance is intentionally increased",
+      "Resilience planning eliminates coordination",
+      "No training or adaptation is required"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why does resilience sometimes reduce short-term output?",
+    o: [
+      "Resources are redirected toward strengthening the system",
+      "It introduces large-scale inefficiency",
+      "It eliminates workflow optimization",
+      "It requires no upfront investment"
+    ],
+    c: "A"
+  },
+  {
+    q: "Diversifying workflows reduces organizational risk because:",
+    o: [
+      "A failure in one area does not collapse the entire system",
+      "It increases reliance on a single process",
+      "It centralizes information excessively",
+      "Variance becomes unpredictable"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why is expected value smoother under a resilience strategy?",
+    o: [
+      "Negative events have reduced impact due to redundancy and cross-training",
+      "Positive events are prevented",
+      "Shocks always amplify with resilience",
+      "Information becomes perfectly shared"
+    ],
+    c: "A"
+  },
+  {
+    q: "Why is resilience-building especially valuable in uncertain environments?",
+    o: [
+      "It creates stability even when forecasting is unreliable",
+      "It relies on perfect predictions",
+      "It removes the need for skilled workers",
+      "It guarantees identical performance every period"
+    ],
+    c: "A"
+  }
+];
+/***********************************************************
+ * PART 6 — SCORING ENGINE + LOGGING + CHECK FUNCTIONS
+ *
+ * - scoreChapter_(chapterNum)
+ * - scoreFinalCheck_()
+ * - checkChapter_(chapterNum) + wrappers
+ * - checkFinalCheck()
+ * - logEvent_()
+ ***********************************************************/
+/*******************************************************
+ * LOG EVENT HELPER (SystemLog)
+ *******************************************************/
+function logEvent_(eventName, details) {
+  const ss = SpreadsheetApp.getActive();
+  const logSheet = ss.getSheetByName(SHEET_SYSTEMLOG);
+  if (!logSheet) return;
+
+  logSheet.appendRow([
+    timestamp_(),
+    eventName,
+    details
+  ]);
+}
+
+
+/*******************************************************
+ * SCORE A SINGLE CHAPTER
+ * - Reads answers from chapter sheet
+ * - Compares to hidden correct column
+ * - Writes score + PASS/FAIL
+ * - Logs to StudentData
+ *******************************************************/
+function scoreChapter_(chapterNum) {
+  const sheet = getChapterSheet_(chapterNum);
+  if (!sheet) {
+    throw new Error("Chapter sheet not found: " + CHAPTER_SHEETS[chapterNum]);
+  }
+
+  const correctRows = [];
+  const incorrectRows = [];
+
+  CHAPTER_Q_ROWS.forEach(row => {
+    const studentAns = sheet
+      .getRange(row, COL_Q_ANSWER)
+      .getValue()
+      .toString()
+      .trim()
+      .toUpperCase();
+
+    const correctAns = sheet
+      .getRange(row, COL_Q_CORRECT)
+      .getValue()
+      .toString()
+      .trim()
+      .toUpperCase();
+
+    if (studentAns === correctAns && ["A", "B", "C", "D"].includes(studentAns)) {
+      correctRows.push(row);
+    } else {
+      incorrectRows.push(row);
+    }
+  });
+
+  const correctCount = correctRows.length;
+  const scoreText    = correctCount + " / 5";
+  const passed       = correctCount >= CHAPTER_PASS_REQUIRED;
+
+  // Write score + result to sheet (B25/B27 per your answer #4A)
+  sheet.getRange("B25").setValue(scoreText);
+  sheet.getRange("B27").setValue(passed ? "PASS" : "FAIL");
+
+  // Log into StudentData
+  const ss = SpreadsheetApp.getActive();
+  const studentSheet = ss.getSheetByName(SHEET_STUDENT);
+  if (studentSheet) {
+    const email = getUserEmail_();
+    const choice = sheet.getRange("B10").getValue().toString().trim().toUpperCase();
+
+    studentSheet.appendRow([
+      timestamp_(),                               // Timestamp
+      email,                                      // User Email
+      CHAPTER_SHEETS[chapterNum],                 // Chapter label
+      scoreText,                                  // Score
+      passed ? "PASS" : "FAIL",                   // Passed?
+      choice || "",                               // Choice (A/B/C)
+      "Correct rows: " + correctRows.join(", ") + // Details
+        " | Incorrect rows: " + incorrectRows.join(", ")
+    ]);
+  }
+
+  logEvent_("CHAPTER_SCORED", "Chapter " + chapterNum + " → " +
+    correctCount + "/5 (" + (passed ? "PASS" : "FAIL") + ")");
+
+  return {
+    passed,
+    correctCount,
+    correctRows,
+    incorrectRows
+  };
+}
+
+
+/*******************************************************
+ * SCORE FINAL CHECK (10 questions)
+ *******************************************************/
+function scoreFinalCheck_() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(SHEET_FINAL);
+  if (!sheet) {
+    throw new Error("Final Check sheet not found.");
+  }
+
+  const correctRows = [];
+  const incorrectRows = [];
+
+  FINAL_Q_ROWS.forEach(row => {
+    const studentAns = sheet
+      .getRange(row, COL_Q_ANSWER)
+      .getValue()
+      .toString()
+      .trim()
+      .toUpperCase();
+
+    const correctAns = sheet
+      .getRange(row, COL_Q_CORRECT)
+      .getValue()
+      .toString()
+      .trim()
+      .toUpperCase();
+
+    if (studentAns === correctAns && ["A","B","C","D"].includes(studentAns)) {
+      correctRows.push(row);
+    } else {
+      incorrectRows.push(row);
+    }
+  });
+
+  const correctCount = correctRows.length;
+  const scoreText    = correctCount + " / 10";
+  const passed       = correctCount >= FINAL_PASS_REQUIRED;
+
+  // Write to B37/B39
+  sheet.getRange("B37").setValue(scoreText);
+  sheet.getRange("B39").setValue(passed ? "PASS" : "FAIL");
+
+  // Log into StudentData
+  const studentSheet = ss.getSheetByName(SHEET_STUDENT);
+  if (studentSheet) {
+    const email = getUserEmail_();
+
+    studentSheet.appendRow([
+      timestamp_(),                               // Timestamp
+      email,                                      // User Email
+      "Final Check",                              // Chapter label
+      scoreText,                                  // Score
+      passed ? "PASS" : "FAIL",                   // Passed?
+      "",                                         // Choice (N/A)
+      "Correct rows: " + correctRows.join(", ") + // Details
+        " | Incorrect rows: " + incorrectRows.join(", ")
+    ]);
+  }
+
+  logEvent_("FINAL_SCORED", "Final Check → " +
+    correctCount + "/10 (" + (passed ? "PASS" : "FAIL") + ")");
+
+  return {
+    passed,
+    correctCount,
+    correctRows,
+    incorrectRows
+  };
+}
+
+
+/*******************************************************
+ * CHECK FUNCTIONS — VALIDATION + SCORING + TOASTS
+ *******************************************************/
+function checkChapter_(chapterNum) {
+  const sheet = getChapterSheet_(chapterNum);
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("Chapter sheet not found: " + CHAPTER_SHEETS[chapterNum]);
+    return;
+  }
+
+  // Ensure all answers filled
+  const allAnswered = CHAPTER_Q_ROWS.every(row => {
+    const val = sheet
+      .getRange(row, COL_Q_ANSWER)
+      .getValue()
+      .toString()
+      .trim()
+      .toUpperCase();
+    return ["A", "B", "C", "D"].includes(val);
+  });
+
+  if (!allAnswered) {
+    SpreadsheetApp.getUi().alert(
+      "Please answer all 5 questions in " + CHAPTER_SHEETS[chapterNum] + " before checking."
+    );
+    return;
+  }
+
+  const result = scoreChapter_(chapterNum);
+
+  if (result.passed) {
+    SpreadsheetApp.getUi().alert(
+      "Nice work! You passed " + CHAPTER_SHEETS[chapterNum] +
+      " with a score of " + result.correctCount + "/5."
+    );
+  } else {
+    SpreadsheetApp.getUi().alert(
+      "You did not pass " + CHAPTER_SHEETS[chapterNum] + ".\n" +
+      "You scored " + result.correctCount + "/5.\n" +
+      "You need at least " + CHAPTER_PASS_REQUIRED + "/5 correct to pass."
+    );
+  }
+
+  SpreadsheetApp.getActive().toast(
+    CHAPTER_SHEETS[chapterNum] + " checked (" +
+      result.correctCount + "/5).",
+    "Check Complete",
+    4
+  );
+}
+
+function hasPassedAllRequirements_() {
+  const ss = SpreadsheetApp.getActive();
+  const studentSheet = ss.getSheetByName(SHEET_STUDENT);
+  if (!studentSheet) return false;
+
+  const data = studentSheet.getDataRange().getValues();
+  const header = data.shift();
+
+  const chapterPassMap = {
+    "Chapter 1 — Hiring & Information": false,
+    "Chapter 2 — Automation vs Freelancers": false,
+    "Chapter 3 — Optimization & Structure": false,
+    "Chapter 4 — Crisis & Risk": false,
+    "Chapter 5 — Endgame Strategy": false,
+    "Final Check": false
+  };
+
+  data.forEach(row => {
+    const chapter = row[2]; // Chapter label
+    const passed  = row[4]; // "PASS" / "FAIL"
+
+    if (chapterPassMap.hasOwnProperty(chapter) && passed === "PASS") {
+      chapterPassMap[chapter] = true;
+    }
+  });
+
+  // Ensure ALL are true
+  return Object.values(chapterPassMap).every(v => v === true);
+}
+
+/*******************************************************
+ * CHECK FINAL CHECK
+ *******************************************************/
+function checkFinalCheck() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(SHEET_FINAL);
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("Final Check sheet not found.");
+    return;
+  }
+
+  const allAnswered = FINAL_Q_ROWS.every(row => {
+    const val = sheet
+      .getRange(row, COL_Q_ANSWER)
+      .getValue()
+      .toString()
+      .trim()
+      .toUpperCase();
+    return ["A", "B", "C", "D"].includes(val);
+  });
+
+  if (!allAnswered) {
+    SpreadsheetApp.getUi().alert(
+      "Please answer all Final Check questions before checking."
+    );
+    return;
+  }
+
+  const result = scoreFinalCheck_();
+
+  if (result.passed) {
+    SpreadsheetApp.getUi().alert(
+      "You passed the Final Check with a score of " +
+        result.correctCount + "/10.\nNice job!"
+    );
+  } else {
+    SpreadsheetApp.getUi().alert(
+      "You did not pass the Final Check.\n" +
+      "You scored " + result.correctCount + "/10.\n" +
+      "You need at least " + FINAL_PASS_REQUIRED + "/10 correct to pass."
+    );
+  }
+
+  SpreadsheetApp.getActive().toast(
+    "Final Check scored (" + result.correctCount + "/10).",
+    "Check Complete",
+    4
+  );
+}
+
+
+/*******************************************************
+ * WRAPPERS FOR MENU ITEMS
+ * (Assumes onOpen added items like "Check Chapter 1")
+ *******************************************************/
+function checkChapter1() { checkChapter_(1); }
+function checkChapter2() { checkChapter_(2); }
+function checkChapter3() { checkChapter_(3); }
+function checkChapter4() { checkChapter_(4); }
+function checkChapter5() { checkChapter_(5); }
+/*******************************************************
+ * RUN CHAPTER WRAPPERS FOR MENU
+ *******************************************************/
+function runChapter1() { runChapter_(1); }
+function runChapter2() { runChapter_(2); }
+function runChapter3() { runChapter_(3); }
+function runChapter4() { runChapter_(4); }
+function runChapter5() { runChapter_(5); }
+function runFinalCheck() {
+  return runFinalCheck_();
+}
+
+/***********************************************************
+ * PART 7A — HTML TEMPLATES FOR EMAILS
+ ***********************************************************/
+
+function buildChapterEmailHtml_(chapterNum, score, passed, choice) {
+  const passColor = passed ? "#16a34a" : "#dc2626"; // green or red
+
+  return `
+  <div style="font-family: Arial, sans-serif; padding: 20px; background: #f8fafc;">
+    <div style="background: #2563eb; padding: 18px; border-radius: 8px; color: white; font-size: 20px; font-weight: bold;">
+      BOW SPORTS CAPITAL — Chapter ${chapterNum} Results
+    </div>
+
+    <div style="margin-top: 20px; padding: 20px; background: white; border-radius: 8px; border: 1px solid #e5e7eb;">
+      <h2 style="margin: 0 0 10px 0; color: #111827;">Your Performance</h2>
+
+      <p style="font-size: 15px; color: #374151;">
+        You chose strategy <strong>${choice}</strong> this chapter and completed all 5 questions.
+      </p>
+
+      <div style="margin-top: 15px; padding: 12px; background: ${passColor}; color: white; border-radius: 6px; font-weight: bold;">
+        Score: ${score} — ${passed ? "PASS" : "FAIL"}
+      </div>
+
+      <p style="margin-top: 18px; color: #6b7280; font-size: 14px;">
+        Keep going — each chapter prepares you for the Final Check.
+      </p>
+    </div>
+
+    <div style="margin-top: 25px; font-size: 12px; color: #9ca3af; text-align: center;">
+      BOW Sports Capital — Module 3 Final Activity
+    </div>
+  </div>
+  `;
+}
+
+
+function buildFinalEmailHtml_(score, passed, claimCode) {
+  const passColor = passed ? "#16a34a" : "#dc2626";
+
+  return `
+  <div style="font-family: Arial, sans-serif; padding: 20px; background: #f1f5f9;">
+    <div style="background: #2563eb; padding: 18px; border-radius: 8px; color: white; font-size: 20px; font-weight: bold;">
+      BOW SPORTS CAPITAL — Final Check Results
+    </div>
+
+    <div style="margin-top: 20px; padding: 20px; background: white; border-radius: 8px; border: 1px solid #e5e7eb;">
+      <h2 style="margin: 0 0 10px 0; color: #111827;">Your Final Check Performance</h2>
+
+      <div style="margin-top: 15px; padding: 12px; background: ${passColor}; color: white; border-radius: 6px; font-weight: bold;">
+        Score: ${score} — ${passed ? "PASS" : "FAIL"}
+      </div>
+
+      ${
+        passed
+          ? `
+        <p style="margin-top: 18px; color: #374151; font-size: 15px;">
+          Excellent work — you passed the Final Check!  
+          Below is your official Module 3 completion code:
+        </p>
+
+        <div style="margin-top: 15px; padding: 15px; background: #fef3c7; border-left: 6px solid #f59e0b; border-radius: 6px;">
+          <div style="font-weight: bold; font-size: 20px; color: #92400e;">
+            ${claimCode}
+          </div>
+        </div>
+      `
+          : `
+        <p style="margin-top: 18px; color: #374151; font-size: 15px;">
+          You did not pass, but you can reattempt the Final Check anytime.
+        </p>
+      `
+      }
+    </div>
+
+    <div style="margin-top: 25px; font-size: 12px; color: #9ca3af; text-align: center;">
+      BOW Sports Capital — Module 3 Certification
+    </div>
+  </div>
+  `;
+}
+/***********************************************************
+ * PART 7B — EMAIL SENDER ENGINE
+ ***********************************************************/
+
+function sendEmail_(to, subject, htmlBody) {
+  MailApp.sendEmail({
+    to: to,
+    subject: subject,
+    htmlBody: htmlBody,
+    name: "BOW Sports Capital"
+  });
+}
+function generateClaimCode_() {
+  // Pick a predefined Module 3 code at random (non-consuming)
+  const index = Math.floor(Math.random() * CLAIM_CODES.length);
+  return CLAIM_CODES[index];
+}
+
+
+function getUserEmail_() {
+  const user = Session.getActiveUser().getEmail();
+  if (user) return user;
+
+  const props = PropertiesService.getUserProperties();
+  const stored = props.getProperty("bow_user_email");
+  if (stored) return stored;
+
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.prompt(
+    "Enter your email",
+    "We will send your chapter results and completion code to this address.",
+    ui.ButtonSet.OK
+  );
+
+  if (response.getSelectedButton() === ui.Button.OK) {
+    const email = response.getResponseText().trim();
+    props.setProperty("bow_user_email", email);
+    return email;
+  }
+
+  throw new Error("Email not provided.");
+}
+/***********************************************************
+ * PART 7C — CHAPTER COMPLETION EMAIL LOGIC
+ ***********************************************************/
+
+function sendChapterEmail_(chapterNum, score, passed, choice) {
+  const email = getUserEmail_();
+  const html = buildChapterEmailHtml_(chapterNum, score, passed, choice);
+
+  sendEmail_(
+    email,
+    `BOW Sports Capital — Chapter ${chapterNum} Results`,
+    html
+  );
+
+  logEvent_("EMAIL_SENT", "Chapter " + chapterNum + " email sent to " + email);
+}
+/***********************************************************
+ * PART 7D — FINAL CHECK EMAIL LOGIC
+ ***********************************************************/
+
+function sendFinalEmail_(score, passed) {
+  const email = getUserEmail_();
+  let claimCode = "";
+
+  if (passed) {
+    // Non-consuming predefined code (Option A behavior)
+    claimCode = CLAIM_CODES[Math.floor(Math.random() * CLAIM_CODES.length)];
+  }
+
+  const html = buildFinalEmailHtml_(score, passed, claimCode);
+
+  sendEmail_(
+    email,
+    "BOW Sports Capital — Final Check Results",
+    html
+  );
+
+  logEvent_("EMAIL_SENT", "Final Check email sent to " + email);
+
+  return claimCode;
+}
+/***********************************************************
+ * PART 8A — RUN CHAPTER ENGINE
+ * 
+ * This loads:
+ *  - Narrative
+ *  - Outcome (based on choice A/B/C)
+ *  - Randomized MCQs (5 questions)
+ *  - Correct answers (hidden col)
+ *  - Dropdowns for student answers
+ ***********************************************************/
+
+function runChapter_(chapterNum) {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = getChapterSheet_(chapterNum)
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("Cannot find sheet: Chapter " + chapterNum);
+    return;
+  }
+
+  // Read student choice (A/B/C)
+  const choice = sheet.getRange("B10").getValue().toString().trim().toUpperCase();
+  if (!["A", "B", "C"].includes(choice)) {
+    SpreadsheetApp.getUi().alert("Please select a valid choice (A, B, or C) before running the chapter.");
+    return;
+  }
+
+  /************ Load Narrative ************/
+  const narrative = getChapterNarrative_(chapterNum);
+  sheet.getRange("A5").setValue(narrative);
+
+  /************ Load Outcome ************/
+  const outcome = getChapterOutcome_(chapterNum, choice);
+  sheet.getRange("A8").setValue(outcome);
+
+  /************ Load MCQs (choice-specific) ************/
+  const fullBank = getChapterQuestions_(chapterNum, choice);
+  if (!fullBank || fullBank.length < 5) {
+    SpreadsheetApp.getUi().alert("Not enough MCQs built for Chapter " + chapterNum + " choice " + choice);
+    return;
+  }
+
+  // Randomize and pick 5
+  const selected = shuffle_(fullBank).slice(0, 5);
+
+  /************ Write Questions & Answer Choices ************/
+  selected.forEach((qObj, i) => {
+    const row = CHAPTER_Q_ROWS[i];
+
+    // Randomize options for the student
+    const randomized = randomizeOptions_(qObj);
+
+    // Write Question text
+    sheet.getRange(row, COL_Q_TEXT).setValue(randomized.question);
+
+    // Write Options block
+    sheet.getRange(row + 1, COL_Q_TEXT).setValue(randomized.optionsBlock);
+
+    // Write correct answer to hidden column
+    sheet.getRange(row, COL_Q_CORRECT).setValue(randomized.correct);
+
+    // Clear student's old answer
+    sheet.getRange(row, COL_Q_ANSWER).setValue("");
+  });
+
+  /************ Build dropdown validation ************/
+  CHAPTER_Q_ROWS.forEach(row => {
+    sheet.getRange(row, COL_Q_ANSWER).setDataValidation(
+      SpreadsheetApp.newDataValidation()
+        .requireValueInList(["A", "B", "C", "D"], true)
+        .setAllowInvalid(false)
+        .build()
+    );
+  });
+
+  SpreadsheetApp.getActive().toast(
+    "Chapter " + chapterNum + " is ready.",
+    "Loaded",
+    4
+  );
+
+  logEvent_("CHAPTER_LOADED", "Chapter " + chapterNum + " loaded with choice " + choice);
+}
+/***********************************************************
+ * PART 8B — RUN FINAL CHECK
+ ***********************************************************/
+
+function runFinalCheck_() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(SHEET_FINAL);
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("Final Check sheet not found.");
+    return;
+  }
+
+  const bank = getFinalQuestions_();
+  if (!bank || bank.length < 10) {
+    SpreadsheetApp.getUi().alert("Not enough Final Check questions built (need ≥ 10).");
+    return;
+  }
+
+  const selected = shuffle_(bank).slice(0, 10);
+
+  /************ Write Questions ************/
+  selected.forEach((qObj, i) => {
+    const row = FINAL_Q_ROWS[i];
+
+    const randomized = randomizeOptions_(qObj);
+
+    sheet.getRange(row, COL_Q_TEXT).setValue(randomized.question);
+    sheet.getRange(row + 1, COL_Q_TEXT).setValue(randomized.optionsBlock);
+
+    // hidden answer
+    sheet.getRange(row, COL_Q_CORRECT).setValue(randomized.correct);
+
+    // reset student answer
+    sheet.getRange(row, COL_Q_ANSWER).setValue("");
+  });
+
+  /************ Build dropdowns ************/
+  FINAL_Q_ROWS.forEach(row => {
+    sheet.getRange(row, COL_Q_ANSWER).setDataValidation(
+      SpreadsheetApp.newDataValidation()
+        .requireValueInList(["A", "B", "C", "D"], true)
+        .setAllowInvalid(false)
+        .build()
+    );
+  });
+
+  SpreadsheetApp.getActive().toast(
+    "Final Check loaded (10 randomized questions).",
+    "Loaded",
+    4
+  );
+
+  logEvent_("FINAL_LOADED", "Final Check refreshed.");
+}
+/***********************************************************
+ * PART 9 — RESET SIMULATION ENGINE
+ *
+ * This fully wipes the workbook back to a clean state:
+ *  - Clears narrative, outcomes, MCQs
+ *  - Clears student answers
+ *  - Clears StudentData + SystemLog
+ *  - Resets dropdowns
+ *  - Optionally re-runs Setup Simulation
+ ***********************************************************/
+
+
+function resetSimulation_() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    "Reset Simulation?",
+    "This will clear all chapter content, answers, and logs.\n" +
+    "Do you want to continue?",
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response !== ui.Button.YES) {
+    return;
+  }
+
+  clearAllChapters_();
+  clearFinalCheck_();
+  clearStudentData_();
+  clearSystemLog_();
+
+  SpreadsheetApp.getActive().toast(
+    "Simulation reset successfully.",
+    "Reset Complete",
+    4
+  );
+
+  logEvent_("RESET_SIMULATION", "All chapters + logs cleared.");
+}
+
+
+/***********************************************************
+ * CLEAR ALL CHAPTER SHEETS
+ ***********************************************************/
+function clearAllChapters_() {
+  const ss = SpreadsheetApp.getActive();
+
+  for (let c = 1; c <= 5; c++) {
+    const sheet = getChapterSheet_(c);
+    if (!sheet) continue;
+
+    // KEEP narrative in A5. Clear only outcome, choice, MCQs, score, pass/fail
+    sheet.getRange("A8").clearContent();   // Outcome text
+    sheet.getRange("B10").clearContent();  // Student choice
+
+    // Clear MCQs
+    CHAPTER_Q_ROWS.forEach(row => {
+      sheet.getRange(row,     COL_Q_TEXT).clearContent();     // question
+      sheet.getRange(row + 1, COL_Q_TEXT).clearContent();     // options block
+      sheet.getRange(row,     COL_Q_ANSWER).clearContent();   // student answer
+      sheet.getRange(row,     COL_Q_CORRECT).clearContent();  // correct answer
+      sheet.getRange(row,     COL_Q_ID).clearContent();       // ID
+    });
+
+    // Clear scored results
+    sheet.getRange("B25").clearContent(); // score
+    sheet.getRange("B27").clearContent(); // pass/fail
+  }
+}
+
+
+
+/***********************************************************
+ * CLEAR FINAL CHECK SHEET
+ ***********************************************************/
+function clearFinalCheck_() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(SHEET_FINAL);
+  if (!sheet) return;
+
+  FINAL_Q_ROWS.forEach(row => {
+    sheet.getRange(row, COL_Q_TEXT).clearContent();
+    sheet.getRange(row + 1, COL_Q_TEXT).clearContent();
+    sheet.getRange(row, COL_Q_ANSWER).clearContent();
+    sheet.getRange(row, COL_Q_CORRECT).clearContent();
+  });
+
+  sheet.getRange("B37").clearContent(); // score
+  sheet.getRange("B39").clearContent(); // pass/fail
+}
+
+
+/***********************************************************
+ * CLEAR STUDENTDATA SHEET
+ ***********************************************************/
+function clearStudentData_() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(SHEET_STUDENT);
+  if (!sheet) return;
+
+  // keep the header row, clear the rest
+  const last = sheet.getLastRow();
+  if (last > 1) {
+    sheet.getRange(2, 1, last - 1, sheet.getLastColumn()).clearContent();
+  }
+}
+
+
+/***********************************************************
+ * CLEAR SYSTEMLOG SHEET
+ ***********************************************************/
+function clearSystemLog_() {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(SHEET_SYSTEMLOG);
+  if (!sheet) return;
+
+  const last = sheet.getLastRow();
+  if (last > 1) {
+    sheet.getRange(2, 1, last - 1, sheet.getLastColumn()).clearContent();
+  }
+}
+/***********************************************************
+ * PART 10 — POLISHING, ERROR HANDLING, AND VALIDATION
+ *
+ * Enhances:
+ *  - runChapter_()
+ *  - checkChapter_()
+ *  - runFinalCheck_()
+ *  - scoreChapter_()
+ *  - scoreFinalCheck_()
+ *
+ * Adds:
+ *  - Pre-run validation
+ *  - Pre-check validation
+ *  - Smart warnings
+ *  - Missing content detection
+ *  - Debug logging
+ ***********************************************************/
+
+
+/*******************************************************
+ * VALIDATE CHAPTER CONTENT EXISTS
+ *******************************************************/
+function validateChapterContent_(chapterNum, choice) {
+  const narrative = CHAPTER_NARRATIVES[chapterNum];
+  const outcomes = CHAPTER_OUTCOMES[chapterNum][choice];
+  const questions = CHAPTER_QUESTIONS[chapterNum][choice];
+
+  let errors = [];
+
+  if (!narrative || narrative.trim() === "") {
+    errors.push("Missing narrative for Chapter " + chapterNum);
+  }
+
+  if (!outcomes || outcomes.trim() === "") {
+    errors.push("Missing outcome for Chapter " + chapterNum + " (choice " + choice + ")");
+  }
+
+  if (!questions || questions.length < 5) {
+    errors.push(
+      "Not enough MCQs for Chapter " +
+        chapterNum +
+        " (choice " +
+        choice +
+        ") — need ≥ 5, found " +
+        (questions ? questions.length : 0)
+    );
+  }
+
+  if (errors.length > 0) {
+    SpreadsheetApp.getUi().alert(
+      "Content Error:\n\n" + errors.join("\n")
+    );
+    return false;
+  }
+
+  return true;
+}
+
+
+/*******************************************************
+ * VALIDATE DROPDOWN ANSWERS (GENERALIZED)
+ *******************************************************/
+function validateAllAnswersPresent_(sheet, rows) {
+  const missing = [];
+
+  rows.forEach(row => {
+    const val = sheet
+      .getRange(row, COL_Q_ANSWER)
+      .getValue()
+      .toString()
+      .trim()
+      .toUpperCase();
+
+    if (!["A", "B", "C", "D"].includes(val)) {
+      missing.push(row);
+    }
+  });
+
+  return missing;
+}
+
+
+/*******************************************************
+ * GUARD: Ensure chapter has been RUN before CHECK
+ *******************************************************/
+function isChapterLoaded_(sheet) {
+  const narrative = sheet.getRange("A5").getValue().toString().trim();
+  return narrative !== "";
+}
+
+function isFinalLoaded_(sheet) {
+  const q1 = sheet.getRange(FINAL_Q_ROWS[0], COL_Q_TEXT).getValue().toString().trim();
+  return q1 !== "";
+}
+
+
+/*******************************************************
+ * OVERRIDE checkChapter_() BEHAVIOR WITH SAFETY
+ *******************************************************/
+const _original_checkChapter = checkChapter_;
+
+checkChapter_ = function (chapterNum) {
+  const sheet = getChapterSheet_(chapterNum);
+
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert(CHAPTER_SHEETS[chapterNum] + " sheet missing.");
+    return;
+  }
+
+  // Prevent checking before running
+  if (!isChapterLoaded_(sheet)) {
+    SpreadsheetApp.getUi().alert(
+      "You must run the chapter before checking your work."
+    );
+    return;
+  }
+
+  // Validate all answers
+  const missing = validateAllAnswersPresent_(sheet, CHAPTER_Q_ROWS);
+  if (missing.length > 0) {
+    SpreadsheetApp.getUi().alert(
+      "Please answer all 5 questions before checking.\nMissing answers at rows: " +
+        missing.join(", ")
+    );
+    return;
+  }
+
+  // Then call original scoring logic
+  _original_checkChapter(chapterNum);
+
+  logEvent_("CHECK_VALIDATED", "Chapter " + chapterNum + " checked with all validation.");
+};
+
+
+/*******************************************************
+ * OVERRIDE runChapter_() WITH CONTENT SAFETY
+ *******************************************************/
+const _original_runChapter = runChapter_;
+
+runChapter_ = function (chapterNum) {
+  const sheet = getChapterSheet_(chapterNum);
+
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert(CHAPTER_SHEETS[chapterNum] + " not found.");
+    return;
+  }
+
+  const choice = sheet.getRange("B10").getValue().toString().trim().toUpperCase();
+
+  if (!["A", "B", "C"].includes(choice)) {
+    SpreadsheetApp.getUi().alert("Select a valid choice (A/B/C) before running.");
+    return;
+  }
+
+  // Validate content exists before running
+  if (!validateChapterContent_(chapterNum, choice)) {
+    return; // do not continue
+  }
+
+  _original_runChapter(chapterNum);
+
+  SpreadsheetApp.getActive().toast(
+    CHAPTER_SHEETS[chapterNum] + " successfully prepared.",
+    "Run Complete",
+    4
+  );
+};
+
+
+
+/*******************************************************
+ * OVERRIDE FINAL CHECK RUN + VALIDATION
+ *******************************************************/
+const _original_runFinal = runFinalCheck_;
+
+runFinalCheck_ = function () {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(SHEET_FINAL);
+
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("Final Check sheet not found.");
+    return;
+  }
+
+  const bank = getFinalQuestions_();
+  if (!bank || bank.length < 10) {
+    SpreadsheetApp.getUi().alert(
+      "Not enough Final Check MCQs.\nNeed at least 10."
+    );
+    return;
+  }
+
+  _original_runFinal();
+
+  SpreadsheetApp.getActive().toast(
+    "Final Check (10 questions) is ready.",
+    "Loaded",
+    4
+  );
+};
+
+
+/*******************************************************
+ * OVERRIDE FINAL CHECK SCORE VALIDATION
+ *******************************************************/
+const _original_checkFinal = checkFinalCheck;
+
+checkFinalCheck = function () {
+  const ss = SpreadsheetApp.getActive();
+  const sheet = ss.getSheetByName(SHEET_FINAL);
+
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("Final Check sheet missing.");
+    return;
+  }
+
+  if (!isFinalLoaded_(sheet)) {
+    SpreadsheetApp.getUi().alert("Please run the Final Check before checking your work.");
+    return;
+  }
+
+  const missing = validateAllAnswersPresent_(sheet, FINAL_Q_ROWS);
+  if (missing.length > 0) {
+    SpreadsheetApp.getUi().alert(
+      "Please answer all Final Check questions before checking.\nMissing rows: " +
+        missing.join(", ")
+    );
+    return;
+  }
+
+  // Score Final
+  const result = scoreFinalCheck_();
+
+  // 🚨 CERTIFICATION GATE
+  if (result.passed && hasPassedAllRequirements_()) {
+    sendFinalEmail_(result.correctCount + " / 10", true);
+
+    SpreadsheetApp.getUi().alert(
+      "Congratulations! You passed all 5 chapters and the Final Check.\n" +
+      "Your Module 3 claim code has been emailed to you."
+    );
+  } else if (result.passed) {
+    SpreadsheetApp.getUi().alert(
+      "You passed the Final Check, but certification is not complete.\n\n" +
+      "You must pass all 5 chapters before receiving a claim code."
+    );
+  } else {
+    SpreadsheetApp.getUi().alert(
+      "You did not pass the Final Check.\n" +
+      "You must pass it to complete Module 3."
+    );
+  }
+
+  logEvent_(
+    "FINAL_CHECK_COMPLETED",
+    "Final → " + result.correctCount + "/10 | Certified: " +
+      (result.passed && hasPassedAllRequirements_())
+  );
+};
+
+
+function runFinalCheck() {
+  return runFinalCheck_();
+}
