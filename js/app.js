@@ -1,20 +1,22 @@
 /*************************************************************
  * BOW SPORTS EMPIRE — APP CONTROLLER
- * Wires engine + UI together, handles all user interactions
+ * Wires engine + UI, handles full game flow
+ * Flow: Intro → Choice → Outcome → Event → Questions → Results+Shop → Next
  *************************************************************/
 
 (function () {
   "use strict";
 
-  // ─── LOCAL TRACKING ────────────────────────────────────
-  let currentSeasonQuestions = null; // prepared adaptive questions for current season
-  let seasonQIndex = 0;             // which question we're on in the season (0 or 1)
-  let seasonScore = 0;              // accumulated points this season
-  let seasonCorrect = 0;            // correct count this season
-  let currentDifficulty = "medium"; // current adaptive difficulty
+  // ─── LOCAL STATE ───────────────────────────────────────
+  let currentSeasonQuestions = null;
+  let seasonQIndex = 0;
+  let seasonScore = 0;
+  let seasonCorrect = 0;
+  let currentDifficulty = "medium";
+  let currentEvent = null;
 
-  let champBank = null;             // championship question banks
-  let champQIndex = 0;              // which champ question (0-4)
+  let champBank = null;
+  let champQIndex = 0;
   let champScore = 0;
   let champCorrect = 0;
   let champDifficulty = "medium";
@@ -31,20 +33,16 @@
 
   function restoreState() {
     const s = GameEngine.state;
-
     if (s.phase === "title" || !s.playerName) {
       GameUI.showScreen("screen-title");
       GameUI.showHeader(false);
       return;
     }
-
-    // Has a saved game — restore to last position
     GameUI.showHeader(true);
     GameUI.updateHeader();
-    GameUI.updateRail(s.currentSeason);
+    GameUI.updateStatBars(false);
 
-    // Simplified restore: just go to the season intro of wherever they were
-    if (s.championship.done) {
+    if (s.championship && s.championship.done) {
       showFinalResults();
     } else if (s.currentSeason > 5) {
       showChampIntro();
@@ -56,24 +54,13 @@
   // ─── EVENT BINDING ─────────────────────────────────────
   function bindEvents() {
     // Title → Name
-    document.getElementById("btn-start").addEventListener("click", () => {
-      GameUI.showScreen("screen-name");
-    });
+    document.getElementById("btn-start").addEventListener("click", () => GameUI.showScreen("screen-name"));
 
-    // Name input
+    // Name
     const nameInput = document.getElementById("input-name");
     const nameBtn = document.getElementById("btn-name-submit");
-
-    nameInput.addEventListener("input", () => {
-      nameBtn.disabled = nameInput.value.trim().length === 0;
-    });
-
-    nameInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && nameInput.value.trim().length > 0) {
-        submitName();
-      }
-    });
-
+    nameInput.addEventListener("input", () => { nameBtn.disabled = nameInput.value.trim().length === 0; });
+    nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && nameInput.value.trim().length > 0) submitName(); });
     nameBtn.addEventListener("click", submitName);
 
     // Season intro → Choice
@@ -85,10 +72,17 @@
     // Lock choice
     document.getElementById("btn-lock-choice").addEventListener("click", lockChoice);
 
-    // Outcome → Questions
-    document.getElementById("btn-to-questions").addEventListener("click", startSeasonQuestions);
+    // After outcome → Event or Questions
+    document.getElementById("btn-after-outcome").addEventListener("click", afterOutcome);
 
-    // Next question (season)
+    // Event choices
+    document.getElementById("event-btn-a").addEventListener("click", () => handleEventChoice("A"));
+    document.getElementById("event-btn-b").addEventListener("click", () => handleEventChoice("B"));
+
+    // After event → Questions
+    document.getElementById("btn-after-event").addEventListener("click", startSeasonQuestions);
+
+    // Next question
     document.getElementById("btn-next-q").addEventListener("click", nextSeasonQuestion);
 
     // Next season
@@ -107,7 +101,7 @@
     });
   }
 
-  // ─── NAME SUBMISSION ───────────────────────────────────
+  // ─── NAME ──────────────────────────────────────────────
   function submitName() {
     const name = document.getElementById("input-name").value.trim();
     if (!name) return;
@@ -116,11 +110,15 @@
     GameEngine.state.startedAt = new Date().toISOString();
     GameEngine.state.phase = "intro";
     GameEngine.state.currentSeason = 1;
+
+    // Init rival
+    GameEngine.initRival();
+
     GameEngine.saveState();
 
     GameUI.showHeader(true);
     GameUI.updateHeader();
-    GameUI.updateRail(1);
+    GameUI.updateStatBars(false);
     showSeasonIntro(1);
   }
 
@@ -130,7 +128,7 @@
     GameEngine.state.phase = "intro";
     GameEngine.saveState();
 
-    GameUI.updateRail(seasonNum);
+    GameUI.updateStatBars(false);
     GameUI.renderSeasonIntro(seasonNum);
     GameUI.showScreen("screen-season-intro");
   }
@@ -143,22 +141,67 @@
     GameEngine.state.seasons[seasonNum].choice = choice;
     GameEngine.state.phase = "outcome";
     delete GameEngine.state._pendingChoice;
+
+    // Apply strategy stat changes
+    const strategyStats = GAME_DATA.seasons[seasonNum].strategies[choice].stats;
+    GameEngine.applyStats(strategyStats);
+
+    // Simulate rival's season
+    GameEngine.simulateRivalSeason(seasonNum);
+
+    // Award coins for making a choice
+    GameEngine.state.coins += 25;
+    GameEngine.state.xp += 10;
     GameEngine.saveState();
 
     GameUI.renderOutcome(seasonNum, choice);
-    GameUI.showScreen("screen-outcome");
-
-    // Award small coins for making a choice
-    GameEngine.state.coins += 25;
-    GameEngine.state.xp += 10;
     GameUI.updateHeader();
-    GameEngine.saveState();
+    GameUI.updateStatBars(true);
+    GameUI.showScreen("screen-outcome");
   }
 
+  function afterOutcome() {
+    // Show a random event (50% chance after season 1, always after season 2+)
+    const seasonNum = GameEngine.state.currentSeason;
+    const showEvent = seasonNum >= 2 || Math.random() > 0.5;
+
+    if (showEvent) {
+      currentEvent = GameEngine.getRandomEvent();
+      if (currentEvent) {
+        GameUI.renderEvent(currentEvent);
+        GameUI.showScreen("screen-event");
+        return;
+      }
+    }
+
+    // No event — go straight to questions
+    startSeasonQuestions();
+  }
+
+  // ─── RANDOM EVENTS ─────────────────────────────────────
+  function handleEventChoice(choice) {
+    if (!currentEvent) return;
+
+    const option = choice === "A" ? currentEvent.optionA : currentEvent.optionB;
+
+    // Apply stat effects
+    GameEngine.applyStats(option.effect);
+
+    // Award coins for engaging with the event
+    GameEngine.state.coins += 15;
+    GameEngine.state.xp += 5;
+    GameEngine.saveState();
+
+    GameUI.renderEventResult(option.result, option.effect);
+    GameUI.updateHeader();
+    GameUI.updateStatBars(true);
+    GameUI.showScreen("screen-event-result");
+  }
+
+  // ─── QUESTIONS ─────────────────────────────────────────
   function startSeasonQuestions() {
     const seasonNum = GameEngine.state.currentSeason;
 
-    // Prepare adaptive questions
     currentSeasonQuestions = GameEngine.prepareSeasonQuestions(seasonNum);
     seasonQIndex = 0;
     seasonScore = 0;
@@ -168,14 +211,12 @@
     GameEngine.state.phase = "questions";
     GameEngine.saveState();
 
-    // Show first question (always medium)
     const q = currentSeasonQuestions[0];
     GameUI.renderQuestion(q, 0, 2, false);
     GameUI.showScreen("screen-question");
   }
 
   function nextSeasonQuestion() {
-    // Record what happened
     const wasCorrect = GameUI._lastAnswerCorrect;
     const lastPoints = GameUI._lastPoints || 0;
     seasonScore += lastPoints;
@@ -184,57 +225,43 @@
     seasonQIndex++;
 
     if (seasonQIndex >= 2) {
-      // Season questions done
       finishSeasonQuestions();
       return;
     }
 
-    // Get adaptive Q2
     const nextDifficulty = GameEngine.getNextDifficulty(wasCorrect, currentDifficulty);
     currentDifficulty = nextDifficulty;
 
-    const q2Data = currentSeasonQuestions[1]; // This has .hard and .easy
-    const q = (nextDifficulty === "hard" || nextDifficulty === "medium")
-      ? q2Data.hard
-      : q2Data.easy;
+    const q2Data = currentSeasonQuestions[1];
+    const q = (nextDifficulty === "hard" || nextDifficulty === "medium") ? q2Data.hard : q2Data.easy;
 
     GameUI.renderQuestion(q, 1, 2, false);
   }
 
   function finishSeasonQuestions() {
     const seasonNum = GameEngine.state.currentSeason;
-    // Q2 result was already counted in nextSeasonQuestion before calling this.
-    // Complete the season
+    // Q2 result was already counted in nextSeasonQuestion.
     const newAchievements = GameEngine.completeSeason(seasonNum, seasonScore);
 
-    // Check perfectionist
     if (seasonCorrect === 2) {
       const ach = GameEngine.unlockAchievement("perfectionist");
       if (ach) newAchievements.push(ach);
     }
 
-    // Also check general achievements
     const moreAchievements = GameEngine.checkAchievements();
-    const allNew = [...newAchievements, ...moreAchievements.filter(a =>
-      !newAchievements.find(n => n.id === a.id)
-    )];
+    const allNew = [...newAchievements, ...moreAchievements.filter(a => !newAchievements.find(n => n.id === a.id))];
 
     GameUI.renderSeasonResults(seasonNum, seasonScore, seasonCorrect, 2);
     GameUI.showScreen("screen-season-results");
     GameUI.updateHeader();
+    GameUI.updateStatBars(true);
 
-    // Show confetti for perfect
     if (seasonCorrect === 2) GameUI.showConfetti();
-
-    // Show achievements
-    if (allNew.length > 0) {
-      GameUI.showNewAchievements(allNew);
-    }
+    if (allNew.length > 0) GameUI.showNewAchievements(allNew);
   }
 
   function goNextSeason() {
     const nextSeason = GameEngine.state.currentSeason + 1;
-
     if (nextSeason > 5) {
       showChampIntro();
     } else {
@@ -247,7 +274,6 @@
     GameEngine.state.currentSeason = 6;
     GameEngine.state.phase = "champ-intro";
     GameEngine.saveState();
-    GameUI.updateRail(6);
     GameUI.showScreen("screen-champ-intro");
   }
 
@@ -263,32 +289,19 @@
 
     GameEngine.state.phase = "champ-q";
     GameEngine.saveState();
-
     showChampQuestion();
   }
 
   function showChampQuestion() {
-    let q;
-    let bank;
-    let usedList;
+    let q, bank, usedList;
 
-    if (champDifficulty === "easy") {
-      bank = champBank.easyBank;
-      usedList = champUsedEasy;
-    } else if (champDifficulty === "hard") {
-      bank = champBank.hardBank;
-      usedList = champUsedHard;
-    } else {
-      bank = champBank.mediumBank;
-      usedList = champUsedMedium;
-    }
+    if (champDifficulty === "easy") { bank = champBank.easyBank; usedList = champUsedEasy; }
+    else if (champDifficulty === "hard") { bank = champBank.hardBank; usedList = champUsedHard; }
+    else { bank = champBank.mediumBank; usedList = champUsedMedium; }
 
-    // Pick an unused question from the bank
     const available = bank.filter((_, i) => !usedList.includes(i));
     if (available.length === 0) {
-      // Fallback: reuse
-      q = bank[0];
-      usedList.push(0);
+      q = bank[0]; usedList.push(0);
     } else {
       const idx = Math.floor(Math.random() * available.length);
       const originalIdx = bank.indexOf(available[idx]);
@@ -296,18 +309,12 @@
       usedList.push(originalIdx);
     }
 
-    const prepared = {
-      ...q,
-      difficulty: champDifficulty,
-      shuffledOptions: GameEngine.shuffleOptions(q)
-    };
-
+    const prepared = { ...q, difficulty: champDifficulty, shuffledOptions: GameEngine.shuffleOptions(q) };
     GameUI.renderQuestion(prepared, champQIndex, 5, true);
     GameUI.showScreen("screen-champ-question");
   }
 
   function nextChampQuestion() {
-    // Record result
     const wasCorrect = GameUI._lastAnswerCorrect;
     const lastPoints = GameUI._lastPoints || 0;
     champScore += lastPoints;
@@ -320,7 +327,6 @@
       return;
     }
 
-    // Adapt difficulty
     champDifficulty = GameEngine.getNextDifficulty(wasCorrect, champDifficulty);
     showChampQuestion();
   }
@@ -328,16 +334,18 @@
   function finishChampionship() {
     const newAchievements = GameEngine.completeChampionship(champScore);
 
+    // Check low risk achievement
+    if (GameEngine.state.stats.risk < 25) {
+      const ach = GameEngine.unlockAchievement("low_risk");
+      if (ach) newAchievements.push(ach);
+    }
+
     GameUI.renderFinalResults();
     GameUI.showScreen("screen-final");
     GameUI.updateHeader();
-
-    if (newAchievements.length > 0) {
-      GameUI.showNewAchievements(newAchievements);
-    }
+    if (newAchievements.length > 0) GameUI.showNewAchievements(newAchievements);
   }
 
-  // ─── FINAL RESULTS ────────────────────────────────────
   function showFinalResults() {
     GameUI.renderFinalResults();
     GameUI.showScreen("screen-final");

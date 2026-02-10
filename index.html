@@ -15,65 +15,76 @@
       <span id="header-level" class="header-level">Intern</span>
     </div>
     <div class="header-center">
-      <div class="xp-bar-container">
-        <div id="xp-bar" class="xp-bar" style="width: 0%"></div>
-      </div>
+      <div class="xp-bar-container"><div id="xp-bar" class="xp-bar" style="width:0%"></div></div>
     </div>
     <div class="header-right">
       <span id="header-coins" class="header-coins">0</span>
       <span class="coin-icon">&#9733;</span>
       <span id="header-streak" class="header-streak hidden">
-        <span class="streak-fire">&#128293;</span>
-        <span id="streak-count">0</span>
+        <span class="streak-fire">&#128293;</span><span id="streak-count">0</span>
       </span>
     </div>
   </header>
 
-  <!-- ═══════ PROGRESS RAIL ═══════ -->
-  <nav id="progress-rail" class="progress-rail hidden">
-    <div class="rail-item" data-season="1"><span class="rail-icon">👤</span><span class="rail-label">S1</span></div>
-    <div class="rail-connector"></div>
-    <div class="rail-item" data-season="2"><span class="rail-icon">📈</span><span class="rail-label">S2</span></div>
-    <div class="rail-connector"></div>
-    <div class="rail-item" data-season="3"><span class="rail-icon">⚙️</span><span class="rail-label">S3</span></div>
-    <div class="rail-connector"></div>
-    <div class="rail-item" data-season="4"><span class="rail-icon">⚡</span><span class="rail-label">S4</span></div>
-    <div class="rail-connector"></div>
-    <div class="rail-item" data-season="5"><span class="rail-icon">🏆</span><span class="rail-label">S5</span></div>
-    <div class="rail-connector"></div>
-    <div class="rail-item" data-season="final"><span class="rail-icon">&#127942;</span><span class="rail-label">Final</span></div>
-  </nav>
+  <!-- ═══════ EMPIRE STATS BAR ═══════ -->
+  <div id="stats-bar" class="stats-bar hidden">
+    <div class="stat-bar-item stat-revenue">
+      <span class="stat-icon">&#128176;</span>
+      <span class="stat-label">REV</span>
+      <div class="stat-track"><div id="stat-revenue" class="stat-fill" style="width:20%"></div></div>
+      <span id="stat-revenue-val" class="stat-value">20</span>
+    </div>
+    <div class="stat-bar-item stat-morale">
+      <span class="stat-icon">&#128170;</span>
+      <span class="stat-label">MOR</span>
+      <div class="stat-track"><div id="stat-morale" class="stat-fill" style="width:50%"></div></div>
+      <span id="stat-morale-val" class="stat-value">50</span>
+    </div>
+    <div class="stat-bar-item stat-efficiency">
+      <span class="stat-icon">&#9889;</span>
+      <span class="stat-label">EFF</span>
+      <div class="stat-track"><div id="stat-efficiency" class="stat-fill" style="width:30%"></div></div>
+      <span id="stat-efficiency-val" class="stat-value">30</span>
+    </div>
+    <div class="stat-bar-item stat-risk">
+      <span class="stat-icon">&#9888;</span>
+      <span class="stat-label">RISK</span>
+      <div class="stat-track"><div id="stat-risk" class="stat-fill" style="width:20%"></div></div>
+      <span id="stat-risk-val" class="stat-value">20</span>
+    </div>
+  </div>
 
-  <!-- ═══════ MAIN CONTENT AREA ═══════ -->
+  <!-- ═══════ MAIN CONTENT ═══════ -->
   <main id="game-main" class="game-main">
 
-    <!-- SCREEN: Title -->
+    <!-- TITLE -->
     <section id="screen-title" class="screen active">
       <div class="title-card">
-        <div class="title-stadium">
-          <div class="stadium-lights">
-            <span></span><span></span><span></span><span></span><span></span>
+        <div class="empire-building stage-0" id="title-building">
+          <div class="building-lights"><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="building-structure">
+            <div class="building-body"></div>
           </div>
-          <div class="stadium-field"></div>
+          <div class="building-ground"></div>
         </div>
         <h1 class="title-main">BOW SPORTS<br><span class="title-accent">EMPIRE</span></h1>
-        <p class="title-sub">Build your sports empire. Master the economics. Become a legend.</p>
+        <p class="title-sub">Build your sports empire. Make real decisions. Master the economics.</p>
         <button id="btn-start" class="btn btn-primary btn-glow">START YOUR EMPIRE</button>
         <p class="title-module">Module 3 Final Activity</p>
       </div>
     </section>
 
-    <!-- SCREEN: Name Entry -->
+    <!-- NAME -->
     <section id="screen-name" class="screen">
       <div class="card card-center">
-        <h2>What's your empire name?</h2>
+        <h2>Name your empire</h2>
         <p class="text-muted">This is YOUR sports empire. Give it a name.</p>
         <input id="input-name" type="text" class="input-name" placeholder="Enter your name..." maxlength="30" autocomplete="off">
         <button id="btn-name-submit" class="btn btn-primary" disabled>LET'S BUILD</button>
       </div>
     </section>
 
-    <!-- SCREEN: Season Intro -->
+    <!-- SEASON INTRO -->
     <section id="screen-season-intro" class="screen">
       <div class="card">
         <div class="season-badge" id="season-badge">SEASON 1</div>
@@ -84,30 +95,52 @@
       </div>
     </section>
 
-    <!-- SCREEN: Strategy Choice -->
+    <!-- STRATEGY CHOICE -->
     <section id="screen-choice" class="screen">
       <div class="choice-header">
         <h2>Choose Your Strategy</h2>
-        <p class="text-muted">Each path has real consequences. Choose wisely.</p>
+        <p class="text-muted">Each path has real consequences for your empire.</p>
       </div>
-      <div class="strategy-grid" id="strategy-grid">
-        <!-- Filled by JS -->
-      </div>
+      <div class="strategy-grid" id="strategy-grid"></div>
       <button id="btn-lock-choice" class="btn btn-primary btn-lock hidden" disabled>LOCK IN CHOICE</button>
     </section>
 
-    <!-- SCREEN: Outcome -->
+    <!-- OUTCOME with stat changes -->
     <section id="screen-outcome" class="screen">
       <div class="card">
         <div class="outcome-label">RESULTS ARE IN</div>
         <h2 id="outcome-choice-title"></h2>
         <div id="outcome-text" class="outcome-box"></div>
+        <div id="stat-changes" class="stat-changes"></div>
         <div id="outcome-insight" class="insight-box"></div>
-        <button id="btn-to-questions" class="btn btn-secondary">STRATEGY CHECK <span class="btn-arrow">&#8594;</span></button>
+        <button id="btn-after-outcome" class="btn btn-primary">CONTINUE</button>
       </div>
     </section>
 
-    <!-- SCREEN: Question (adaptive, one at a time) -->
+    <!-- RANDOM EVENT -->
+    <section id="screen-event" class="screen">
+      <div class="card event-card">
+        <div class="event-flash">BREAKING NEWS</div>
+        <h2 id="event-headline" class="event-title"></h2>
+        <p id="event-desc" class="event-description"></p>
+        <div class="event-choices">
+          <button id="event-btn-a" class="btn-event"></button>
+          <button id="event-btn-b" class="btn-event"></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- EVENT RESULT -->
+    <section id="screen-event-result" class="screen">
+      <div class="card card-center">
+        <div class="event-result-icon">&#9889;</div>
+        <p id="event-result-text" class="event-result-text"></p>
+        <div id="event-stat-changes" class="stat-changes"></div>
+        <button id="btn-after-event" class="btn btn-primary">CONTINUE</button>
+      </div>
+    </section>
+
+    <!-- QUESTION -->
     <section id="screen-question" class="screen">
       <div class="card">
         <div class="question-header">
@@ -115,31 +148,41 @@
           <span id="q-counter" class="q-counter">1 / 2</span>
         </div>
         <p id="q-text" class="q-text"></p>
-        <div id="q-options" class="q-options">
-          <!-- Filled by JS -->
-        </div>
+        <div id="q-options" class="q-options"></div>
         <div id="q-feedback" class="q-feedback hidden"></div>
         <button id="btn-next-q" class="btn btn-primary hidden">NEXT</button>
       </div>
     </section>
 
-    <!-- SCREEN: Season Results -->
+    <!-- SEASON RESULTS + SHOP -->
     <section id="screen-season-results" class="screen">
       <div class="card card-center">
+        <div class="empire-building-mini" id="result-building"></div>
         <div id="result-status" class="result-status"></div>
         <h2 id="result-title"></h2>
+
+        <!-- Rival comparison -->
+        <div id="rival-compare" class="rival-compare hidden"></div>
+
         <div class="result-stats" id="result-stats"></div>
-        <div id="result-achievements" class="result-achievements"></div>
+
+        <!-- Shop -->
+        <div id="shop-section" class="shop-section">
+          <h3 class="shop-title">Empire Shop</h3>
+          <p class="text-muted">Spend coins to boost your stats</p>
+          <div id="shop-grid" class="shop-grid"></div>
+        </div>
+
         <button id="btn-next-season" class="btn btn-primary"></button>
       </div>
     </section>
 
-    <!-- SCREEN: Championship Intro -->
+    <!-- CHAMPIONSHIP INTRO -->
     <section id="screen-champ-intro" class="screen">
       <div class="card card-center">
         <div class="champ-badge">&#127942; CHAMPIONSHIP ROUND &#127942;</div>
         <h2>Prove You Can Run an Empire</h2>
-        <p class="text-muted">5 adaptive questions across everything you've learned. The difficulty adjusts to YOUR level.</p>
+        <p class="text-muted">5 adaptive questions. Difficulty adjusts to YOUR level.</p>
         <div class="champ-stakes">
           <div class="stake">Harder questions = More points</div>
           <div class="stake">Your empire rating depends on this</div>
@@ -148,7 +191,7 @@
       </div>
     </section>
 
-    <!-- SCREEN: Championship Question -->
+    <!-- CHAMPIONSHIP QUESTION -->
     <section id="screen-champ-question" class="screen">
       <div class="card">
         <div class="question-header champ-header">
@@ -156,22 +199,21 @@
           <span id="cq-counter" class="q-counter">1 / 5</span>
         </div>
         <p id="cq-text" class="q-text"></p>
-        <div id="cq-options" class="q-options">
-          <!-- Filled by JS -->
-        </div>
+        <div id="cq-options" class="q-options"></div>
         <div id="cq-feedback" class="q-feedback hidden"></div>
         <button id="btn-next-cq" class="btn btn-primary hidden">NEXT</button>
       </div>
     </section>
 
-    <!-- SCREEN: Final Results -->
+    <!-- FINAL RESULTS -->
     <section id="screen-final" class="screen">
       <div class="card card-center">
+        <div class="empire-building-mini" id="final-building"></div>
         <div id="final-rating-badge" class="final-rating-badge"></div>
         <h2 id="final-title"></h2>
+        <div id="final-empire-stats" class="final-empire-stats"></div>
         <div id="final-stats" class="final-stats"></div>
         <div id="final-claim" class="final-claim hidden"></div>
-        <div id="final-achievements" class="result-achievements"></div>
         <button id="btn-play-again" class="btn btn-secondary">PLAY AGAIN</button>
       </div>
     </section>
@@ -180,17 +222,10 @@
   <!-- ═══════ OVERLAYS ═══════ -->
   <div id="achievement-toast" class="toast hidden">
     <span id="toast-icon" class="toast-icon"></span>
-    <div class="toast-text">
-      <strong id="toast-title"></strong>
-      <span id="toast-desc"></span>
-    </div>
+    <div class="toast-text"><strong id="toast-title"></strong><span id="toast-desc"></span></div>
   </div>
-
   <div id="confetti-container" class="confetti-container hidden"></div>
 
-  <div id="coin-fly-container" class="coin-fly-container"></div>
-
-  <!-- ═══════ SCRIPTS ═══════ -->
   <script src="js/game-data.js"></script>
   <script src="js/game-engine.js"></script>
   <script src="js/game-ui.js"></script>
