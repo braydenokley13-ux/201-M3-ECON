@@ -317,12 +317,14 @@ const GameEngine = {
    * Prepare the two adaptive questions for a season.
    * Q1 is always medium. Q2 branches to hard (if Q1 correct) or
    * easy (if Q1 wrong); both paths are prepared ahead of time.
+   * Questions are specific to the strategy the player chose.
    *
    * @param {number} seasonNum  1-5
+   * @param {string} choice     "A", "B", or "C"
    * @returns {Array}
    */
-  prepareSeasonQuestions(seasonNum) {
-    const pool = GAME_DATA.questions[seasonNum];
+  prepareSeasonQuestions(seasonNum, choice) {
+    const pool = GAME_DATA.questions[seasonNum][choice];
     const questions = [];
 
     // Q1 — always medium

@@ -201,8 +201,9 @@
   // ─── QUESTIONS ─────────────────────────────────────────
   function startSeasonQuestions() {
     const seasonNum = GameEngine.state.currentSeason;
+    const choice = GameEngine.state.seasons[seasonNum].choice;
 
-    currentSeasonQuestions = GameEngine.prepareSeasonQuestions(seasonNum);
+    currentSeasonQuestions = GameEngine.prepareSeasonQuestions(seasonNum, choice);
     seasonQIndex = 0;
     seasonScore = 0;
     seasonCorrect = 0;
